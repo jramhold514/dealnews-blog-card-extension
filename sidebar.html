@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blog Card Editor</title>
+<link rel="stylesheet" href="sidebar.css">
+</head>
+<body>
+
+<div class="app-shell">
+
+  <div class="header">
+    <span class="header-title">Blog Card Editor</span>
+    <span class="header-badge">DealNews</span>
+    <button class="theme-toggle" id="theme-btn" title="Toggle dark mode">
+      <svg id="theme-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Token bar -->
+  <div class="token-bar">
+    <div class="token-bar-row">
+      <label for="token-input">API Token</label>
+      <input type="password" id="token-input" placeholder="DatoCMS read-only token…" autocomplete="off" />
+      <span class="token-status" id="token-status">—</span>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" id="tab-configure" data-tab="configure">Configure</button>
+    <button class="tab" id="tab-processor" data-tab="processor">Processor</button>
+    <button class="tab" id="tab-article"   data-tab="article">Article</button>
+  </div>
+
+  <!-- Change Log — records what the Processor and Article tabs actually did to HTML -->
+  <div class="change-log-wrap">
+    <button class="change-log-toggle" id="change-log-toggle">
+      <span class="change-log-caret">▸</span>
+      <span>Change Log</span>
+      <span class="change-log-count" id="change-log-count"></span>
+    </button>
+    <div class="change-log-body" id="change-log-body" style="display:none;">
+      <div class="change-log-actions">
+        <button class="small" id="change-log-clear">Clear</button>
+      </div>
+      <div id="change-log-list"></div>
+    </div>
+  </div>
+
+  <!-- ── Configure (Edit / Preview / HTML) ── -->
+  <div class="pane active" id="pane-configure">
+
+    <div class="subtabs">
+      <button class="subtab active" id="subtab-edit"    data-subtab="edit">Edit</button>
+      <button class="subtab" id="subtab-preview" data-subtab="preview">Preview</button>
+      <button class="subtab" id="subtab-html"    data-subtab="html">HTML</button>
+    </div>
+
+    <!-- Edit -->
+    <div class="subpane active" id="subpane-edit">
+      <div class="settings-card">
+        <div class="settings-row">
+          <label for="blog-content-id">Blog Content ID</label>
+          <input type="text" id="blog-content-id" placeholder="article ID this card is going on" />
+        </div>
+        <p style="font-size:10px;color:var(--text-faint);margin-top:6px;">
+          Required for data-iref click-tracking attributes on generated cards' links (format: <code>site-widget-card-blog-{this ID}-{offer's legacy ID}-{image|title|button}</code>). Leave blank and no data-iref attributes are added.
+        </p>
+      </div>
+
+      <div class="search-row">
+        <input type="text" id="id-input" placeholder="Dato/Legacy IDs, comma-separated" />
+        <button id="add-btn">Add</button>
+        <span class="spinner" id="spinner" style="display:none;"></span>
+      </div>
+      <p class="msg" id="add-progress" style="display:none;color:var(--text-muted);"></p>
+      <p class="msg err" id="add-err" style="display:none;"></p>
+
+      <hr>
+
+      <div class="empty" id="offers-empty">No offers added yet.</div>
+
+      <div id="sort-bar-wrap" style="display:none;">
+        <div class="sort-bar">
+          <span class="sort-bar-label">Sort</span>
+          <button class="sort-btn" id="sort-asc-btn">↑ Asc</button>
+          <button class="sort-btn" id="sort-desc-btn">↓ Desc</button>
+          <button class="sort-btn" id="sort-auto-btn">✦ Auto</button>
+          <span class="sort-detect" id="sort-detect-label"></span>
+          <span id="offer-count" style="margin-left:auto;font-size:11px;color:var(--text-muted);"></span>
+          <button class="danger-text" id="remove-all-btn">Remove All</button>
+        </div>
+        <div class="sort-bar">
+          <span class="sort-bar-label">Layout</span>
+          <button class="sort-btn active" id="layout-grid-btn" title="Multi-column grid (default)">Grid</button>
+          <button class="sort-btn" id="layout-vertical-btn" title="Single-column vertical stack">Vertical</button>
+        </div>
+      </div>
+
+      <div class="tbl-wrap" id="offers-tbl-wrap" style="display:none;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:18px;"></th>
+              <th style="width:24px;">#</th>
+              <th>Title</th>
+              <th style="width:58px;">Callout</th>
+              <th style="width:80px;">CTA text</th>
+              <th style="width:24px;"></th>
+              <th style="width:62px;"></th>
+            </tr>
+          </thead>
+          <tbody id="offers-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Preview -->
+    <div class="subpane" id="subpane-preview">
+      <div class="preview-header">
+        <button id="view-html-btn">View HTML →</button>
+      </div>
+      <div class="empty" id="preview-empty">Add offers in the Edit view first.</div>
+      <div id="cards-container"></div>
+    </div>
+
+    <!-- HTML Output -->
+    <div class="subpane" id="subpane-html">
+      <div class="preview-header">
+        <button class="primary" id="copy-btn">Copy HTML</button>
+      </div>
+      <p class="msg warn" id="iref-blog-id-warn" style="display:none;">⚠ No Blog Content ID set (Edit view) — cards generated below have no data-iref tracking attributes.</p>
+      <div class="empty" id="html-empty">Add offers in the Edit view first.</div>
+      <div id="html-out-block" style="display:none;">
+        <div class="html-out-wrap">
+          <div class="html-out-toolbar">
+            <span>Generated HTML</span>
+            <button id="copy-btn-2">Copy</button>
+          </div>
+          <pre class="html-out-pre" id="html-out-pre"></pre>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /pane-configure -->
+
+  <!-- ── Deal Processor ── -->
+  <div class="pane" id="pane-processor">
+    <p class="processor-desc">Paste raw deal HTML and swap all CTA button text at once.</p>
+
+    <div class="proc-card">
+      <label class="proc-label">Raw HTML Input</label>
+      <textarea id="proc-htmlInput" rows="7" placeholder="Paste your raw HTML here…"></textarea>
+    </div>
+
+    <div class="tracking-banner" id="proc-tracking-banner" style="display:none;"></div>
+
+    <div class="proc-row">
+      <div class="proc-card">
+        <label class="proc-label">New Button Text</label>
+        <input type="text" id="proc-btnText" placeholder='e.g. "Get Deal"' value="Get Deal" />
+      </div>
+      <div class="proc-tally">
+        <div class="proc-tally-num" id="proc-tallyNum">—</div>
+        <div class="proc-tally-label">Found</div>
+      </div>
+    </div>
+
+    <div class="proc-btn-row">
+      <button class="primary" id="proc-process-btn">⚡ Process</button>
+      <button id="proc-clear-btn">✕ Clear</button>
+    </div>
+
+    <div class="proc-card">
+      <div class="proc-output-header">
+        <span style="font-size:12px;font-weight:600;color:var(--text);">Output</span>
+        <button id="proc-copyBtn" style="display:none;" class="small">Copy HTML</button>
+      </div>
+      <textarea id="proc-outputArea" rows="8" readonly placeholder="Modified HTML will appear here…"></textarea>
+    </div>
+  </div>
+
+  <!-- ── Article ── -->
+  <div class="pane" id="pane-article">
+
+    <!-- Settings -->
+    <div class="article-section">
+      <div class="section-label">Settings</div>
+      <div class="settings-card">
+        <div class="settings-row">
+          <label for="exp-field">Expiry field</label>
+          <input type="text" id="exp-field" value="expiration_datetime" placeholder="DatoCMS field API key" />
+        </div>
+        <div class="settings-row" style="margin-top:8px;">
+          <label for="editor-selector">Editor selector</label>
+          <input type="text" id="editor-selector" placeholder="e.g. #body, textarea[name=content]" />
+        </div>
+        <p style="font-size:10px;color:var(--text-faint);margin-top:6px;">
+          Leave blank to auto-detect. If Load from Page reads the wrong field, right-click the article body textarea → Inspect, then enter its CSS selector here.
+        </p>
+        <div style="margin-top:8px;display:flex;gap:6px;align-items:center;">
+          <button id="diag-btn" class="small">Run Diagnostics</button>
+          <span class="spinner" id="diag-spinner" style="display:none;"></span>
+        </div>
+        <pre id="diag-out" style="display:none;margin-top:8px;font-size:10px;font-family:var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:8px;overflow-x:auto;white-space:pre-wrap;"></pre>
+      </div>
+    </div>
+
+    <!-- Load -->
+    <div class="article-section">
+      <div class="section-label">Load Article</div>
+      <div class="article-actions">
+        <button class="primary" id="load-page-btn">↓ Load from Page</button>
+        <button id="manual-toggle-btn">Paste manually</button>
+        <span class="spinner" id="article-spinner" style="display:none;"></span>
+      </div>
+      <div id="manual-area" style="display:none;">
+        <textarea class="manual-textarea" id="manual-html-input" rows="6"
+          placeholder="Paste article HTML here, then click Parse…"></textarea>
+        <div style="margin-top:6px;display:flex;gap:6px;">
+          <button class="primary" id="parse-manual-btn">Parse</button>
+          <button id="cancel-manual-btn">Cancel</button>
+        </div>
+      </div>
+      <p class="msg err" id="article-load-err" style="display:none;"></p>
+      <div class="tracking-banner" id="article-tracking-banner" style="display:none;"></div>
+    </div>
+
+    <!-- Found cards -->
+    <div class="article-section" id="cards-found-section" style="display:none;">
+      <div class="section-label">Deal Cards Found</div>
+
+      <p style="font-size:10px;color:var(--text-faint);margin:0 0 6px;">
+        Drag a row or edit its # to reorder — applied when you regenerate below.
+      </p>
+      <div class="card-list-wrap">
+        <ul class="card-list" id="article-card-list"></ul>
+      </div>
+
+      <!-- Sits right above the flag/check buttons below (rather than above
+           the list) so the counts are visible without scrolling back up
+           while flagging cards for removal. -->
+      <div id="article-status-bar" class="article-status-bar"></div>
+
+      <div class="article-actions" style="flex-wrap:wrap;">
+        <button id="check-exp-btn">Check Expirations</button>
+        <span class="spinner" id="check-spinner" style="display:none;"></span>
+        <button id="flag-expired-btn" class="small">Flag Expired</button>
+        <button id="flag-all-btn" class="small">Flag All for Removal</button>
+        <button id="flag-all-except-kept-btn" class="small">Flag All Except Kept</button>
+        <button id="unflag-all-btn" class="small">Unflag All</button>
+        <button id="article-preview-toggle" class="small">🖼 Show Visual Preview</button>
+        <p class="msg err" id="check-err" style="display:none;width:100%;"></p>
+      </div>
+
+      <p style="font-size:10px;color:var(--text-faint);margin:8px 0 0;display:none;" id="article-preview-hint">
+        Cards marked "⚠ Unverifiable" have no offer ID, so DatoCMS can't confirm their status — check the callout, description, and CTA text for expiry language.
+      </p>
+      <div id="article-preview-container" style="display:none;margin-top:8px;"></div>
+    </div>
+
+    <!-- Find & Replace -->
+    <div class="article-section" id="find-replace-section" style="display:none;">
+      <div class="section-label">Find &amp; Replace</div>
+      <p style="font-size:10px;color:var(--text-faint);margin-bottom:8px;">
+        Plain-text search across the loaded article HTML — for quick fixes like updating a month in a header. Find lists every match with surrounding context so you can see which are in headers vs. body copy and uncheck the ones to leave alone. Card titles/callouts/CTA text below update to match applied changes; click Remove Flagged / Reorder &amp; Regenerate afterward to produce the final copyable HTML.
+      </p>
+      <div class="settings-card">
+        <div class="settings-row">
+          <label for="find-input">Find</label>
+          <input type="text" id="find-input" placeholder="e.g. August 2026" />
+        </div>
+        <div class="settings-row" style="margin-top:8px;">
+          <label for="replace-input">Replace</label>
+          <input type="text" id="replace-input" placeholder="e.g. September 2026" />
+        </div>
+      </div>
+      <div class="article-actions" style="margin-top:8px;">
+        <label style="font-size:11px;display:flex;align-items:center;gap:4px;color:var(--text-muted);">
+          <input type="checkbox" id="find-case-sensitive" /> Case-sensitive
+        </label>
+        <button class="primary" id="find-replace-btn">Find Matches</button>
+        <span id="find-replace-tally" style="font-size:11px;color:var(--text-muted);"></span>
+      </div>
+      <p class="msg err" id="find-replace-err" style="display:none;"></p>
+
+      <div id="find-matches-wrap" style="display:none;margin-top:8px;">
+        <div class="article-actions" style="margin-bottom:6px;">
+          <button class="small" id="find-matches-select-all">Select All</button>
+          <button class="small" id="find-matches-select-none">Select None</button>
+          <span id="find-matches-counter" style="font-size:11px;color:var(--text-muted);"></span>
+        </div>
+        <ul class="find-matches-list" id="find-matches-list"></ul>
+        <div class="article-actions" style="margin-top:8px;">
+          <button class="primary" id="find-apply-btn">Apply to Selected</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Regenerate -->
+    <div class="article-section" id="regen-section" style="display:none;">
+      <div class="section-label">Apply Changes &amp; Regenerate</div>
+      <div class="article-actions">
+        <button class="primary" id="regen-btn">Remove Flagged / Reorder &amp; Regenerate</button>
+      </div>
+      <div class="tracking-banner" id="regen-tracking-banner" style="display:none;margin-top:10px;"></div>
+      <div id="regen-out-block" style="display:none;margin-top:10px;">
+        <div class="html-out-wrap">
+          <div class="html-out-toolbar">
+            <span>Updated Article HTML</span>
+            <div style="display:flex;gap:6px;">
+              <button id="regen-copy-btn" class="small">Copy</button>
+            </div>
+          </div>
+          <pre class="html-out-pre" id="regen-out-pre"></pre>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /pane-article -->
+
+</div><!-- /app-shell -->
+
+<div class="toast" id="toast"></div>
+
+<script src="sidebar.js"></script>
+</body>
+</html>

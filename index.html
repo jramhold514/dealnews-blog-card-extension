@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DealNews Live Feed Generator</title>
+<style>
+  :root {
+    --bg: #f5f5f5;
+    --surface: #ffffff;
+    --border: #dddddd;
+    --border-strong: #bbbbbb;
+    --text: #1a1a1a;
+    --text-muted: #666666;
+    --text-faint: #999999;
+    --accent: #1a73e8;
+    --radius: 6px;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a1a;
+      --surface: #242424;
+      --border: #3a3a3a;
+      --border-strong: #555555;
+      --text: #eeeeee;
+      --text-muted: #aaaaaa;
+      --text-faint: #777777;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 32px 16px;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .subtitle { font-size: 12px; color: var(--text-muted); margin: 0 0 20px; line-height: 1.5; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .row label { width: 90px; font-size: 12px; font-weight: 600; color: var(--text-muted); flex-shrink: 0; }
+  .row input {
+    flex: 1;
+    font-family: var(--sans);
+    font-size: 13px;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+  }
+  .row input:focus { outline: none; border-color: var(--accent); }
+  button {
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+  button:hover { opacity: 0.9; }
+  .err {
+    color: #d33;
+    font-size: 12px;
+    margin: 10px 0 0;
+    display: none;
+  }
+  .out-wrap { display: none; }
+  .out-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  pre {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 420px;
+    overflow-y: auto;
+    margin: 0;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>DealNews Live Feed Generator</h1>
+  <p class="subtitle">
+    Generates a &lt;div&gt;+&lt;script&gt; snippet that embeds a static, crawlable snapshot of the current
+    matching offers (good for SEO — search crawlers see real content immediately) and then quietly replaces
+    it with freshly-fetched results for real visitors once the page loads. Standalone tool: no DatoCMS token,
+    no extension install needed. Note: generating the snapshot means fetching api.dealnews.com directly from
+    wherever this page is hosted — if that origin isn't allowed to call it, Generate still produces a working
+    live-refresh-only snippet, just without the baked-in snapshot.
+  </p>
+
+  <div class="card">
+    <div class="row"><label for="title">Title</label><input id="title" placeholder="optional heading, e.g. Shop the Best 4K TV Deals" /></div>
+    <div class="row"><label for="link">Link</label><input id="link" placeholder='optional "See All" URL for the heading' /></div>
+    <div class="row"><label for="category">Category</label><input id="category" placeholder="optional, legacy ID e.g. 159" /></div>
+    <div class="row"><label for="facet">Facet</label><input id="facet" placeholder="optional, legacy ID e.g. 1409" /></div>
+    <div class="row"><label for="store">Store</label><input id="store" placeholder="optional, legacy vendor ID" /></div>
+    <div class="row"><label for="count">Count</label><input id="count" type="number" min="1" max="50" value="10" /></div>
+    <div class="row"><label for="cta">CTA text</label><input id="cta" value="Buy Now" /></div>
+    <div class="row" style="margin-bottom:0;">
+      <button class="primary" id="generate-btn">Generate</button>
+      <span id="summary-msg" style="font-size:12px;color:var(--text-muted);"></span>
+    </div>
+    <p class="err" id="err-msg">Provide at least one of Category, Facet, or Store.</p>
+  </div>
+
+  <div class="out-wrap" id="out-wrap">
+    <div class="out-toolbar">
+      <span>Generated HTML</span>
+      <button id="copy-btn">Copy</button>
+    </div>
+    <pre id="out-pre"></pre>
+  </div>
+</div>
+
+<script>
+function esc(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+const DEALNEWS_API_AUTH = 'DN jxqfz29pbv9xpWSYnmJX';
+
+/* Ported verbatim from the DealNews Blog Card Editor extension's sidebar.js
+ * (fetchDealNewsOffers / buildStaticSnapshotHTML / generateLiveFeedHTML).
+ * Keep this in sync with that source if it changes — see that project's
+ * CLAUDE.md "Live Feed" section for the full design notes (why DOM APIs are
+ * used instead of string concatenation in the refresh script, the
+ * Authorization header requirement, the image-size priority, the hybrid
+ * static-snapshot-plus-live-refresh design, etc.). */
+async function fetchDealNewsOffers(cfg) {
+  const params = [];
+  if (cfg.category) params.push('category_id=' + encodeURIComponent(cfg.category));
+  if (cfg.facet)    params.push('facet_ids=' + encodeURIComponent(cfg.facet));
+  if (cfg.vendor)   params.push('vendor_id=' + encodeURIComponent(cfg.vendor));
+  params.push('refcode_append=' + encodeURIComponent(cfg.refcode));
+  const res = await fetch(`https://api.dealnews.com/content?${params.join('&')}`, {
+    headers: { Authorization: DEALNEWS_API_AUTH }
+  });
+  if (!res.ok) throw new Error(`API error ${res.status} fetching live feed offers`);
+  const data = await res.json();
+  return (data.content || []).slice(0, cfg.count);
+}
+
+// Real, static HTML — not sitting inside a <script> tag — so unlike the
+// DOM-built cards below, plain esc()'d string templating is safe here; this
+// is exactly the shape DealNews's own pipeline expects a real .bu-card to be.
+function buildStaticSnapshotHTML(items, ctaText) {
+  const cards = items.map(o => {
+    const href = o.offsite_url || o.url || '#';
+    const img = o.images && (o.images.XL || o.images.XXL || o.images.Maximum || o.images.Large || o.images.Medium);
+    const v = (o.vendor && o.vendor.vendor_id) || 0;
+    const headline = esc(o.headline || '');
+    const imgTag = img
+      ? `<img src="${esc(img.url)}" alt="${headline}" style="height: 100%; max-width: 100%; object-fit: contain;">`
+      : '';
+    return `      <div class="bu-card shadow-depth-0" data-offer-id="${o.id}">
+        <div class="bu-card-content">
+          <div class="bu-columns">
+            <div class="bu-column bu-is-full-tablet bu-is-one-third-desktop bu-is-one-fifth-widescreen bu-is-flex bu-is-justify-content-center" style="height: 200px; width: 200px; margin: auto;">
+              <a href="${esc(href)}" vendor="${v}" brand="0" category="0" title="${headline}">${imgTag}</a>
+            </div>
+            <div class="bu-column bu-is-flex bu-is-flex-direction-column" style="min-width: 150px;">
+              <h3 class="bu-is-4 bu-mb-2"><a href="${esc(href)}" vendor="${v}" brand="0" category="0" title="${headline}">${headline}</a></h3>
+              <span class="price content-call-out bu-is-5 bu-mb-4">${esc(o.call_out || '')}</span>
+              <p class="bu-content bu-is-flex-grow-1">${esc(o.value_statement || '')}</p>
+              <div class="bu-content bu-ml-0 bu-mb-0 bu-is-flex-touch bu-is-justify-content-center">
+                <a class="btn btn-cta bu-m-0" href="${esc(href)}" vendor="${v}" brand="0" category="0" title="${headline}">${esc(ctaText)}</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }).join('\n');
+  return `<div class="bu-vertical-offers">\n${cards}\n    </div>`;
+}
+
+async function generateLiveFeedHTML({ title, link, category, facet, vendor, count, ctaText }) {
+  const uid = 'dn-live-' + Math.random().toString(36).slice(2, 10);
+  const cfg = {
+    category: category || '',
+    facet: facet || '',
+    vendor: vendor || '',
+    count: Math.max(1, Math.min(50, parseInt(count, 10) || 10)),
+    ctaText: ctaText || 'Buy Now',
+    refcode: 'live-widget-' + uid,
+  };
+
+  // Fetched once here, at generation time, to bake a real, crawlable snapshot
+  // directly into the output — the same data the live-refresh script below
+  // fetches again in each visitor's browser. On this standalone page (unlike
+  // the extension, which has host_permissions for api.dealnews.com) this
+  // fetch is subject to normal browser CORS for whatever origin this page is
+  // hosted on; if that's rejected, or the network hiccups, fall back to a
+  // live-refresh-only widget rather than failing the whole generation.
+  let items = [];
+  let snapshotFailed = false;
+  try {
+    items = await fetchDealNewsOffers(cfg);
+  } catch (e) {
+    snapshotFailed = true;
+  }
+  const snapshotHtml = items.length ? buildStaticSnapshotHTML(items, cfg.ctaText) : '';
+
+  const headingHtml = title
+    ? `<h3 style="margin:0 0 10px;">${link ? `<a href="${esc(link)}">${esc(title)}</a>` : esc(title)}</h3>`
+    : '';
+
+  // The live-refresh script's card markup is built entirely via DOM APIs
+  // (createElement, .textContent, .href, ...) rather than concatenated
+  // HTML-tag strings — unlike the static snapshot above, this text sits
+  // inside a <script> tag, and DealNews's save/publish pipeline appears to
+  // regex-scan raw article HTML for <img src="..."> patterns (likely an
+  // image-preload or featured-image detector) without knowing to skip over
+  // <script> tag contents. A string-concatenation version of this same script
+  // got its embedded `<img src="' + imgUrl + '">` text misread as a real tag
+  // and mangled badly enough that nothing executed at all. Building nodes via
+  // the DOM instead means no `<tag` text ever appears in the saved script
+  // source for that scanner to misinterpret. cfg is still embedded via one
+  // JSON.stringify() call, which safely handles any characters (quotes, etc.)
+  // typed into the form.
+  const html = `<div id="${uid}">
+${headingHtml}
+${snapshotHtml}
+</div>
+<script>
+(function() {
+  var cfg = ${JSON.stringify(cfg)};
+  var container = document.getElementById(${JSON.stringify(uid)});
+  var params = [];
+  if (cfg.category) params.push('category_id=' + encodeURIComponent(cfg.category));
+  if (cfg.facet)    params.push('facet_ids=' + encodeURIComponent(cfg.facet));
+  if (cfg.vendor)   params.push('vendor_id=' + encodeURIComponent(cfg.vendor));
+  params.push('refcode_append=' + encodeURIComponent(cfg.refcode));
+
+  function makeLink(href, vendorId, titleText) {
+    var a = document.createElement('a');
+    a.href = href;
+    a.setAttribute('vendor', vendorId);
+    a.setAttribute('brand', '0');
+    a.setAttribute('category', '0');
+    a.title = titleText;
+    return a;
+  }
+
+  fetch('https://api.dealnews.com/content?' + params.join('&'), {
+    headers: { 'Authorization': 'DN jxqfz29pbv9xpWSYnmJX' }
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var items = (data.content || []).slice(0, cfg.count);
+      // No replacement on an empty or failed refresh — the static snapshot
+      // baked in at generation time stays exactly where it is rather than the
+      // widget going blank, so a visitor whose browser can't reach the API
+      // (or a stale API response) still sees real, if possibly slightly
+      // dated, content instead of nothing.
+      if (!items.length) return;
+
+      var list = document.createElement('div');
+      list.className = 'bu-vertical-offers';
+
+      items.forEach(function(o) {
+        var href = o.offsite_url || o.url || '#';
+        // Card image box is 200x200px — pick the smallest size that's still
+        // at or above that so images aren't upscaled and blurry. Medium
+        // (75px) and Large (125px) are both smaller than the display box;
+        // XL (250px) is the first size that comfortably covers it.
+        var img = o.images && (o.images.XL || o.images.XXL || o.images.Maximum || o.images.Large || o.images.Medium);
+        var v = (o.vendor && o.vendor.vendor_id) || 0;
+        var headline = o.headline || '';
+
+        var card = document.createElement('div');
+        card.className = 'bu-card shadow-depth-0';
+        card.setAttribute('data-offer-id', o.id);
+
+        var content = document.createElement('div');
+        content.className = 'bu-card-content';
+        var columns = document.createElement('div');
+        columns.className = 'bu-columns';
+
+        var imgCol = document.createElement('div');
+        imgCol.className = 'bu-column bu-is-full-tablet bu-is-one-third-desktop bu-is-one-fifth-widescreen bu-is-flex bu-is-justify-content-center';
+        imgCol.style.height = '200px';
+        imgCol.style.width = '200px';
+        imgCol.style.margin = 'auto';
+        var imgLink = makeLink(href, v, headline);
+        if (img) {
+          var imgEl = document.createElement('img');
+          imgEl.src = img.url;
+          imgEl.alt = headline;
+          imgEl.style.height = '100%';
+          imgEl.style.maxWidth = '100%';
+          imgEl.style.objectFit = 'contain';
+          imgLink.appendChild(imgEl);
+        }
+        imgCol.appendChild(imgLink);
+        columns.appendChild(imgCol);
+
+        var textCol = document.createElement('div');
+        textCol.className = 'bu-column bu-is-flex bu-is-flex-direction-column';
+        textCol.style.minWidth = '150px';
+
+        var h3 = document.createElement('h3');
+        h3.className = 'bu-is-4 bu-mb-2';
+        var titleLink = makeLink(href, v, headline);
+        titleLink.textContent = headline;
+        h3.appendChild(titleLink);
+        textCol.appendChild(h3);
+
+        var priceSpan = document.createElement('span');
+        priceSpan.className = 'price content-call-out bu-is-5 bu-mb-4';
+        priceSpan.textContent = o.call_out || '';
+        textCol.appendChild(priceSpan);
+
+        var valueP = document.createElement('p');
+        valueP.className = 'bu-content bu-is-flex-grow-1';
+        valueP.textContent = o.value_statement || '';
+        textCol.appendChild(valueP);
+
+        var ctaWrap = document.createElement('div');
+        ctaWrap.className = 'bu-content bu-ml-0 bu-mb-0 bu-is-flex-touch bu-is-justify-content-center';
+        var ctaLink = makeLink(href, v, headline);
+        ctaLink.className = 'btn btn-cta bu-m-0';
+        ctaLink.textContent = cfg.ctaText;
+        ctaWrap.appendChild(ctaLink);
+        textCol.appendChild(ctaWrap);
+
+        columns.appendChild(textCol);
+        content.appendChild(columns);
+        card.appendChild(content);
+        list.appendChild(card);
+      });
+
+      var existing = container.querySelector('.bu-vertical-offers');
+      if (existing) { existing.replaceWith(list); } else { container.appendChild(list); }
+    })
+    .catch(function() { /* leave the static snapshot in place */ });
+})();
+<\/script>`;
+
+  return { html, itemCount: items.length, snapshotFailed };
+}
+
+async function render() {
+  const title    = document.getElementById('title').value.trim();
+  const link     = document.getElementById('link').value.trim();
+  const category = document.getElementById('category').value.trim();
+  const facet    = document.getElementById('facet').value.trim();
+  const vendor   = document.getElementById('store').value.trim();
+  const count    = document.getElementById('count').value.trim();
+  const ctaText  = document.getElementById('cta').value.trim();
+  const errEl    = document.getElementById('err-msg');
+  const outWrap  = document.getElementById('out-wrap');
+  const btn      = document.getElementById('generate-btn');
+  const summary  = document.getElementById('summary-msg');
+
+  errEl.style.display = 'none';
+  summary.textContent = '';
+
+  if (!category && !facet && !vendor) {
+    errEl.style.display = 'block';
+    outWrap.style.display = 'none';
+    return;
+  }
+
+  const origBtnText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+
+  try {
+    const { html, itemCount, snapshotFailed } = await generateLiveFeedHTML({ title, link, category, facet, vendor, count, ctaText });
+    outWrap.style.display = 'block';
+    document.getElementById('out-pre').textContent = html;
+    summary.textContent = snapshotFailed
+      ? 'Couldn’t fetch a snapshot just now — generated a live-refresh-only version (no SEO benefit this time).'
+      : itemCount
+        ? `${itemCount} offer${itemCount !== 1 ? 's' : ''} embedded as the static snapshot`
+        : 'No offers matched right now — the snapshot will be empty until some do, but live visitors will still see fresh results once they exist.';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origBtnText;
+  }
+}
+
+function copyOut() {
+  const text = document.getElementById('out-pre').textContent;
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copy-btn');
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => { btn.textContent = orig; }, 2000);
+  });
+}
+
+document.getElementById('generate-btn').addEventListener('click', render);
+document.getElementById('copy-btn').addEventListener('click', copyOut);
+</script>
+</body>
+</html>
