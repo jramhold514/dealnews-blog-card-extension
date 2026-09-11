@@ -14,6 +14,12 @@ const TRACKING_LINK_PATTERN = /https?:\/\/[^\s"'<>]*(?:artclick|\/lw\/click\.htm
 // meant to stay on the page despite being expired (e.g. "Expired" as the
 // button label) — not a stale card that should be swept up automatically.
 const EXPIRED_CTA_PATTERN = /expired/i;
+// The CTA text moveAllExpiredToGroup()/toggleMoveToExpiredGroup() write onto
+// a card's button when moving it into the Expired group on regenerate (see
+// "Expired group" in CLAUDE.md). Contains "expired," so a re-loaded copy of
+// the regenerated article will detect these cards as keepDespiteExpired on
+// its own — no special-casing needed to keep that in sync.
+const EXPIRED_GROUP_CTA_TEXT = 'Expired Promo';
 
 /* ─── State ─── */
 let offers = [];
@@ -949,6 +955,7 @@ function parseAndDisplayCards(html) {
     return {
       index: i, title, landingUrl, offerId, ctaText, imageUrl, callout, valueStatement,
       keepDespiteExpired, irefMissing, irefMismatched, status: 'unchecked', flagged: false,
+      moveToExpiredGroup: false,
     };
   });
 
@@ -1189,6 +1196,8 @@ function renderArticleCards() {
       <span class="badge ${badgeClassForStatus(card)}" id="badge-${i}" title="${esc(badgeTitleForCard(card))}">${badgeLabelForStatus(card)}</span>
       <button class="${card.flagged ? 'flag-btn flagged' : 'flag-btn'}" data-index="${i}"
         title="${card.flagged ? 'Unflag' : 'Flag for removal'}">🚩</button>
+      <button class="${card.moveToExpiredGroup ? 'expire-move-btn active' : 'expire-move-btn'}" data-index="${i}"
+        title="${card.moveToExpiredGroup ? 'Cancel — will not move to the Expired group' : `Move to the Expired group on regenerate (CTA becomes ${EXPIRED_GROUP_CTA_TEXT})`}">🗄️</button>
     </li>`).join('');
   initArticleDrag();
   // Keep the visual preview in sync with reorders/re-parses without needing
@@ -1251,7 +1260,7 @@ function renderArticlePreview() {
     const unverifiable = !card.offerId
       ? `<span class="badge badge-unknown" style="margin-left:6px;" title="No data-offer-id on this card — status can't be checked via DatoCMS. Read the text below for expiry language instead.">⚠ Unverifiable</span>`
       : '';
-    return `<div class="card-wrap${card.flagged ? ' flagged' : ''}">
+    return `<div class="card-wrap${card.flagged ? ' flagged' : ''}${card.moveToExpiredGroup ? ' moved-expired' : ''}">
       <div class="card-id">
         #${i + 1} · ${card.offerId ? esc(card.offerId) : 'no offer ID'}
         <span class="badge ${badgeClassForStatus(card)}" style="margin-left:6px;" title="${esc(badgeTitleForCard(card))}">${badgeLabelForStatus(card)}</span>
@@ -1270,6 +1279,10 @@ function renderArticlePreview() {
             <button class="${card.flagged ? 'flag-btn flagged' : 'flag-btn'}" data-action="toggle-flag" data-index="${i}"
               style="flex-shrink:0;font-size:11px;padding:4px 10px;">
               ${card.flagged ? '🚩 Flagged — click to unflag' : '🚩 Flag for Removal'}
+            </button>
+            <button class="${card.moveToExpiredGroup ? 'expire-move-btn active' : 'expire-move-btn'}" data-action="move-to-expired" data-index="${i}"
+              style="flex-shrink:0;font-size:11px;padding:4px 10px;">
+              ${card.moveToExpiredGroup ? '🗄️ Moving to Expired Group — click to cancel' : '🗄️ Move to Expired Group'}
             </button>
           </div>
         </div>
@@ -1429,6 +1442,12 @@ function initArticleDrag() {
 
 function badgeClassForStatus(card) {
   if (card.flagged) return 'badge-flagged';
+  // Mutually exclusive with card.flagged (see toggleFlag()/
+  // toggleMoveToExpiredGroup()), so this and the flagged check above never
+  // both apply — order between them doesn't matter functionally, but this
+  // sits ahead of keepDespiteExpired since it's a pending action about to
+  // happen on regenerate, not just a passive note.
+  if (card.moveToExpiredGroup) return 'badge-move-expired';
   if (card.keepDespiteExpired) return 'badge-keep';
   switch (card.status) {
     case 'active':   return 'badge-active';
@@ -1441,6 +1460,7 @@ function badgeClassForStatus(card) {
 
 function badgeLabelForStatus(card) {
   if (card.flagged) return 'Flagged';
+  if (card.moveToExpiredGroup) return '→ Expired Group';
   if (card.keepDespiteExpired) return 'Keep (CTA: Expired)';
   switch (card.status) {
     case 'active':   return 'Active';
@@ -1452,6 +1472,9 @@ function badgeLabelForStatus(card) {
 }
 
 function badgeTitleForCard(card) {
+  if (card.moveToExpiredGroup) {
+    return `Will move into the Expired group on regenerate — CTA text will change to "${EXPIRED_GROUP_CTA_TEXT}".`;
+  }
   if (card.keepDespiteExpired) {
     return `Kept intentionally — CTA button text says "${card.ctaText}". Skipped by "Flag Expired".`;
   }
@@ -1464,11 +1487,13 @@ function updateArticleStatusBar() {
   const flagged = articleCards.filter(c => c.flagged).length;
   const noId    = articleCards.filter(c => !c.offerId).length;
   const kept    = articleCards.filter(c => c.keepDespiteExpired).length;
+  const movingToExpiredGroup = articleCards.filter(c => c.moveToExpiredGroup).length;
   const irefIssues = articleCards.filter(c => (c.irefMissing?.length || c.irefMismatched?.length)).length;
 
   let msg = `<strong>${total}</strong> deal card${total !== 1 ? 's' : ''} found`;
   if (expired > 0) msg += ` · <strong style="color:var(--red)">${expired} expired/deleted</strong>`;
   if (flagged > 0) msg += ` · <strong style="color:var(--orange)">${flagged} flagged</strong>`;
+  if (movingToExpiredGroup > 0) msg += ` · <strong style="color:var(--purple)">${movingToExpiredGroup} → Expired group</strong>`;
   if (kept > 0)    msg += ` · <strong style="color:var(--accent)">${kept} kept (CTA: expired)</strong>`;
   if (noId > 0)    msg += ` · ${noId} without offer ID`;
   if (irefIssues > 0) msg += ` · <strong style="color:var(--yellow)">${irefIssues} with data-iref issues</strong>`;
@@ -1483,17 +1508,58 @@ function toggleFlag(index) {
   const card = articleCards[index];
   if (!card) return;
   card.flagged = !card.flagged;
+  // Mutually exclusive with moveToExpiredGroup — a card is either removed
+  // or moved into the Expired group on regenerate, never both.
+  if (card.flagged) card.moveToExpiredGroup = false;
 
-  const badge = document.getElementById('badge-' + index);
-  const btn   = document.querySelector(`[data-index="${index}"].flag-btn, .flag-btn[data-index="${index}"]`);
-  if (badge) { badge.className = 'badge ' + badgeClassForStatus(card); badge.textContent = badgeLabelForStatus(card); badge.title = badgeTitleForCard(card); }
-  if (btn)   { btn.className = card.flagged ? 'flag-btn flagged' : 'flag-btn'; btn.title = card.flagged ? 'Unflag' : 'Flag for removal'; }
+  // Full re-render rather than hand-patching this row's badge/button: once
+  // flagging can also clear moveToExpiredGroup, that second button's state
+  // needs to update too, and duplicating that patch logic for two buttons
+  // isn't worth it over just re-rendering (renderArticleCards() already
+  // re-renders the preview too when it's visible).
+  renderArticleCards();
   updateArticleStatusBar();
-  // The list row above is patched in place (cheap, frequent target), but the
-  // visual preview's flag button also carries its own label text and the
-  // card-wrap's dimmed/outlined "flagged" state — simplest to just re-render
-  // it wholesale rather than duplicating that patch logic a second time.
-  if (articlePreviewVisible) renderArticlePreview();
+}
+
+// Mutually exclusive with card.flagged — see toggleFlag() above. Toggling
+// this on marks the card to be relocated into the article's existing
+// "Expired" #custom-offers-list section on regenerate, with its CTA text
+// rewritten to EXPIRED_GROUP_CTA_TEXT, instead of being deleted. See
+// "Expired group" in CLAUDE.md for the regenerate-time handling and why an
+// existing second container is required.
+function toggleMoveToExpiredGroup(index) {
+  const card = articleCards[index];
+  if (!card) return;
+  card.moveToExpiredGroup = !card.moveToExpiredGroup;
+  if (card.moveToExpiredGroup) card.flagged = false;
+  renderArticleCards();
+  updateArticleStatusBar();
+}
+
+// Bulk counterpart to toggleMoveToExpiredGroup() — sweeps every card that's
+// expired by either signal this tool has: a live DatoCMS status check
+// (status === 'expired'/'deleted') or the card's own CTA text already
+// saying so (keepDespiteExpired). Unlike flagExpired()/flagAllExceptKept(),
+// keepDespiteExpired cards are NOT skipped here — a card an editor already
+// chose to keep despite being expired is exactly the kind of card this
+// feature exists to consolidate into one section, not something to leave
+// untouched.
+function moveAllExpiredToGroup() {
+  if (!articleCards.length) return;
+  let moved = 0;
+  articleCards.forEach(card => {
+    const isExpired = card.status === 'expired' || card.status === 'deleted' || card.keepDespiteExpired;
+    if (!isExpired) return;
+    card.moveToExpiredGroup = true;
+    card.flagged = false;
+    moved++;
+  });
+  renderArticleCards();
+  updateArticleStatusBar();
+  showToast(
+    moved ? `Marked ${moved} card${moved !== 1 ? 's' : ''} to move to the Expired group on regenerate.` : 'No expired cards found to move.',
+    !moved
+  );
 }
 
 function setAllFlags(flagged) {
@@ -1592,6 +1658,15 @@ function removeAndRegenerate() {
       .filter(c => c.flagged || c.status === 'expired' || c.status === 'deleted')
       .map(c => c.index)
   );
+  // Mutually exclusive with toRemove by construction (toggleFlag()/
+  // toggleMoveToExpiredGroup() never let both be true on the same card),
+  // but the !toRemove.has() guard costs nothing and protects against state
+  // ever drifting out of sync.
+  const toMoveToExpired = new Set(
+    articleCards
+      .filter(c => c.moveToExpiredGroup && !toRemove.has(c.index))
+      .map(c => c.index)
+  );
   const reordered = articleCards.some((c, i) => c.index !== i);
 
   // Removal/reorder aren't the only reasons to regenerate anymore — a Find &
@@ -1601,7 +1676,7 @@ function removeAndRegenerate() {
   // Without articleHTMLModified here, those edits would be silently stuck:
   // "nothing to do" would fire even though the article's HTML genuinely
   // differs from what was loaded.
-  if (toRemove.size === 0 && !reordered && !articleHTMLModified) {
+  if (toRemove.size === 0 && !reordered && !articleHTMLModified && toMoveToExpired.size === 0) {
     showToast('No cards flagged or expired, order is unchanged, and no edits have been made — nothing to do.', true);
     logChange('Article', 'Regenerate clicked — nothing to do (no flagged/expired cards, order unchanged, no edits).');
     return;
@@ -1621,17 +1696,69 @@ function removeAndRegenerate() {
   const singleContainer = containers.length === 1 ? containers[0] : null;
   const canReorder = !!singleContainer && cardEls.every(el => el.parentNode === singleContainer);
 
+  // The Expired-group feature requires an EXISTING second container to move
+  // into (deliberately — no attempt to fabricate a heading/section, since
+  // there's no article-agnostic way to guess appropriate heading text).
+  // Checked, and bailed out of if invalid, before any DOM mutation below —
+  // this must be all-or-nothing, not a partial regenerate.
+  let expiredContainer = null;
+  if (toMoveToExpired.size > 0) {
+    if (containers.length !== 2) {
+      showToast(
+        `Can't move ${toMoveToExpired.size} card${toMoveToExpired.size !== 1 ? 's' : ''} to an Expired group — found ${containers.length} #custom-offers-list container${containers.length !== 1 ? 's' : ''} in this article, but this needs exactly 2 (the active list, then an existing Expired section to move into). Unmark the card(s), or add that section to the article first.`,
+        true
+      );
+      return;
+    }
+    // Document order, not creation order — the article's own second
+    // #custom-offers-list (after whatever heading introduces it, e.g.
+    // "Expired Promo Codes") is assumed to be the later one in the source.
+    expiredContainer = containers[1];
+  }
+
   toRemove.forEach(idx => { if (cardEls[idx]) cardEls[idx].remove(); });
 
-  if (canReorder) {
+  // Gated on `reordered`, not just `canReorder` — appendChild moves every
+  // surviving card to the END of the container one at a time, so running
+  // this when nothing was actually reordered has no benefit (a plain
+  // .remove() already closes up the gap on its own — the flex/grid layout
+  // reflows the remaining cards with no help needed) and one real cost: any
+  // non-`.bu-card` content sitting inside #custom-offers-list (stray
+  // whitespace, or a malformed card missing its own `.bu-card` wrapper —
+  // see "Generated HTML" below) never gets moved, so once every recognized
+  // card is hoisted past it to the end, that stray content is left stranded
+  // wherever it happened to sit — typically near the top of the list —
+  // instead of a plain gap where the removed card used to be.
+  if (canReorder && reordered) {
     // appendChild on an already-attached node moves it — replaying
     // articleCards' current (possibly user-reordered) order here reorders
-    // the container's children to match, skipping removed cards.
+    // the container's children to match, skipping removed and moved cards
+    // (a card moving to the Expired group has nothing to do with this
+    // list's own order, and re-appending it here would fight the
+    // appendChild into expiredContainer below over where it ends up).
     articleCards.forEach(c => {
       const el = cardEls[c.index];
-      if (el && !toRemove.has(c.index)) singleContainer.appendChild(el);
+      if (el && !toRemove.has(c.index) && !toMoveToExpired.has(c.index)) singleContainer.appendChild(el);
     });
   }
+
+  // Rewrites each moved card's CTA text and relocates it into the article's
+  // existing Expired section, consolidating it with whatever else is
+  // already there. Order follows articleCards' current array order, same
+  // as the reorder loop above, for a predictable result rather than
+  // whatever order toMoveToExpired's Set happens to iterate in (which is
+  // insertion order here — also articleCards order — but this is more
+  // robust to that changing later).
+  const movedCards = [];
+  articleCards.forEach(c => {
+    if (!toMoveToExpired.has(c.index)) return;
+    const el = cardEls[c.index];
+    if (!el) return;
+    const ctaEl = el.querySelector('.' + PROC_TARGET_CLASS);
+    if (ctaEl) ctaEl.textContent = EXPIRED_GROUP_CTA_TEXT;
+    expiredContainer.appendChild(el);
+    movedCards.push(c);
+  });
 
   // Leading <script>/<style> blocks (e.g. JSON-LD structured data) get
   // parsed into the synthetic <head> by DOMParser since they're "metadata
@@ -1658,17 +1785,19 @@ function removeAndRegenerate() {
   const removed = toRemove.size;
   const parts = [];
   if (removed) parts.push(`removed ${removed} card${removed !== 1 ? 's' : ''}`);
+  if (movedCards.length) parts.push(`moved ${movedCards.length} card${movedCards.length !== 1 ? 's' : ''} to Expired group`);
   if (reordered) parts.push(canReorder ? 'applied new order' : "order unchanged — cards aren't in one recognized container");
-  // Nothing was removed or reordered, but articleHTMLModified is what got us
-  // past the gate above — say so, rather than showing an empty ". Review
-  // HTML below." with no context for why there's new output.
+  // Nothing was removed, moved, or reordered, but articleHTMLModified is
+  // what got us past the gate above — say so, rather than showing an empty
+  // ". Review HTML below." with no context for why there's new output.
   if (!parts.length) parts.push('applied edits (Find & Replace / iref fix)');
   showToast(`${parts.join(', ')}. Review HTML below.`);
 
   // Change log detail: exactly which cards were removed and why, exactly
-  // which cards moved and where, and whether any <head>-parsed content
-  // (script/style blocks like JSON-LD) was carried through — the kind of
-  // detail needed to tell a real bug apart from expected behavior.
+  // which cards moved and where (both to the Expired group and via reorder),
+  // and whether any <head>-parsed content (script/style blocks like JSON-LD)
+  // was carried through — the kind of detail needed to tell a real bug
+  // apart from expected behavior.
   const logDetails = [];
   articleCards
     .filter(c => toRemove.has(c.index))
@@ -1678,10 +1807,13 @@ function removeAndRegenerate() {
         : c.flagged ? 'flagged' : c.status;
       logDetails.push(`Removed "${c.title}"${c.offerId ? ` (offer ${c.offerId})` : ''} — ${why}`);
     });
+  movedCards.forEach(c => {
+    logDetails.push(`Moved "${c.title}"${c.offerId ? ` (offer ${c.offerId})` : ''} to Expired group — CTA now reads "${EXPIRED_GROUP_CTA_TEXT}"`);
+  });
   if (reordered) {
     if (canReorder) {
       articleCards.forEach((c, i) => {
-        if (!toRemove.has(c.index) && c.index !== i) {
+        if (!toRemove.has(c.index) && !toMoveToExpired.has(c.index) && c.index !== i) {
           logDetails.push(`Moved "${c.title}" from position ${c.index + 1} to ${i + 1}`);
         }
       });
@@ -1864,6 +1996,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('flag-all-btn').addEventListener('click',     () => setAllFlags(true));
   document.getElementById('flag-all-except-kept-btn').addEventListener('click', flagAllExceptKept);
   document.getElementById('unflag-all-btn').addEventListener('click',   () => setAllFlags(false));
+  document.getElementById('move-all-expired-btn').addEventListener('click', moveAllExpiredToGroup);
   document.getElementById('article-preview-toggle').addEventListener('click', toggleArticlePreview);
   document.getElementById('find-replace-btn').addEventListener('click', previewArticleFindMatches);
   document.getElementById('find-input').addEventListener('keydown', e => {
@@ -1900,7 +2033,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const articleCardList = document.getElementById('article-card-list');
   articleCardList.addEventListener('click', e => {
     const btn = e.target.closest('.flag-btn');
-    if (btn) toggleFlag(parseInt(btn.dataset.index));
+    if (btn) { toggleFlag(parseInt(btn.dataset.index)); return; }
+    const moveBtn = e.target.closest('.expire-move-btn');
+    if (moveBtn) toggleMoveToExpiredGroup(parseInt(moveBtn.dataset.index));
   });
   articleCardList.addEventListener('keydown', e => {
     if (e.target.matches('.pos-input') && e.key === 'Enter') {
@@ -1917,6 +2052,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('article-preview-container').addEventListener('click', e => {
     const flagBtn = e.target.closest('[data-action="toggle-flag"]');
     if (flagBtn) { toggleFlag(parseInt(flagBtn.dataset.index)); return; }
+    const moveBtn = e.target.closest('[data-action="move-to-expired"]');
+    if (moveBtn) { toggleMoveToExpiredGroup(parseInt(moveBtn.dataset.index)); return; }
     const fixBtn = e.target.closest('[data-action="fix-iref"]');
     if (fixBtn) applyIrefFix(parseInt(fixBtn.dataset.index));
   });

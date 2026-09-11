@@ -17,6 +17,8 @@
   --yellow-bg: #fdf8e8;
   --orange: #c05a00;
   --orange-bg: #fef3e8;
+  --purple: #7b3fa0;
+  --purple-bg: #f6eefb;
   --success: #1a7a3c;
   --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
   --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
@@ -37,6 +39,8 @@
   --red-bg: #2a1a18;
   --yellow-bg: #221e0e;
   --orange-bg: #221408;
+  --purple: #b98adb;
+  --purple-bg: #241a2c;
 }
 
 body {
@@ -407,6 +411,7 @@ tr.row-locked .pos-input { opacity: 0.4; pointer-events: none; }
 .preview-header { display: flex; justify-content: flex-end; margin-bottom: 14px; gap: 6px; align-items: center; }
 .card-wrap { margin-bottom: 14px; }
 .card-wrap.flagged .card-preview { opacity: 0.55; outline: 2px solid var(--orange); outline-offset: 2px; }
+.card-wrap.moved-expired .card-preview { opacity: 0.7; outline: 2px dashed var(--purple); outline-offset: 2px; }
 .card-id { font-family: var(--mono); font-size: 10px; color: var(--text-faint); margin-bottom: 4px; }
 .card-preview {
   background: #fff;
@@ -603,6 +608,7 @@ tr.row-locked .pos-input { opacity: 0.4; pointer-events: none; }
 .badge-flagged   { background: var(--orange-bg); color: var(--orange);  border-color: var(--orange); }
 .badge-checking  { background: var(--bg);        color: var(--text-faint); border-color: var(--border); }
 .badge-keep      { background: var(--surface);    color: var(--accent);    border-color: var(--accent); }
+.badge-move-expired { background: var(--purple-bg); color: var(--purple);  border-color: var(--purple); }
 
 /* Tracking-link warning banner (artclick / /lw/click.html) */
 .tracking-banner {
@@ -637,6 +643,22 @@ tr.row-locked .pos-input { opacity: 0.4; pointer-events: none; }
 }
 .flag-btn:hover { color: var(--orange); border-color: var(--border); }
 .flag-btn.flagged { color: var(--orange); border-color: var(--orange); background: var(--orange-bg); }
+
+/* Move-to-Expired-group button — same shape as .flag-btn, distinct purple
+   so it's never confused with the removal flag's orange. */
+.expire-move-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 2px 5px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-faint);
+  transition: color 0.1s, border-color 0.1s;
+}
+.expire-move-btn:hover { color: var(--purple); border-color: var(--border); }
+.expire-move-btn.active { color: var(--purple); border-color: var(--purple); background: var(--purple-bg); }
 
 /* Settings card */
 .settings-card {
