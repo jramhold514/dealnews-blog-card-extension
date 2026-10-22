@@ -1390,6 +1390,59 @@ async function applyIrefFix(i) {
   }
 }
 
+// Bulk counterpart to applyIrefFix() — runs the exact same per-card fix
+// sequentially (never in parallel: each call re-parses and re-splices
+// articleOriginalHTML fresh, so concurrent calls would race against each
+// other's edits) for every card with an iref issue, instead of clicking
+// "Fix iref" once per card. Reuses applyIrefFix() itself rather than
+// duplicating its legacy-ID-resolution/splice logic — success is detected
+// by re-checking irefMissing/irefMismatched afterward (refreshArticleCardFields()
+// inside applyIrefFix() already recomputed them), not by having
+// applyIrefFix() return anything.
+async function fixAllIrefIssues() {
+  const candidates = articleCards
+    .map((c, i) => i)
+    .filter(i => articleCards[i].irefMissing?.length || articleCards[i].irefMismatched?.length);
+
+  if (!candidates.length) {
+    showToast('No iref issues found to fix.', true);
+    return;
+  }
+
+  // Checked once up front rather than letting every iteration hit the same
+  // wall — applyIrefFix() would otherwise show this identical error once
+  // per card instead of once total.
+  const blogContentId = document.getElementById('blog-content-id').value.trim();
+  if (!blogContentId) {
+    showToast('Enter a Blog Content ID (Configure tab → Edit) before fixing data-iref tags.', true);
+    return;
+  }
+
+  // Cards with no data-offer-id can never be fixed automatically (same rule
+  // applyIrefFix() enforces per-card) — skip them here rather than let each
+  // one flash its own identical error, and report the count once instead.
+  const noOfferId = candidates.filter(i => !articleCards[i].offerId);
+  const fixable = candidates.filter(i => articleCards[i].offerId);
+
+  const btn = document.getElementById('fix-all-iref-btn');
+  const originalLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Fixing…'; }
+
+  let fixed = 0;
+  for (const i of fixable) {
+    await applyIrefFix(i);
+    const card = articleCards[i];
+    if (!(card.irefMissing?.length || card.irefMismatched?.length)) fixed++;
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
+
+  const failed = fixable.length - fixed;
+  const parts = [`fixed ${fixed} of ${fixable.length} card${fixable.length !== 1 ? 's' : ''}`];
+  if (noOfferId.length) parts.push(`${noOfferId.length} skipped — no offer ID`);
+  showToast(`${parts.join(', ')}.`, failed > 0 || noOfferId.length > 0);
+}
+
 /* ─── Article card reorder ─── */
 // Identifies the card by its stable original-DOM index (card.index), not its
 // current display position — the keydown handler below re-renders (which
@@ -1653,9 +1706,18 @@ function updateCardBadge(index) {
 function removeAndRegenerate() {
   if (!articleCards.length || !articleOriginalHTML) return;
 
+  // Flagged is the single source of truth for removal — flagExpired() /
+  // flagAllExceptKept() / the bulk buttons / per-card 🚩 are all just ways to
+  // SET card.flagged, not separate removal signals. Checking c.status here
+  // too (as a prior version of this code did) silently removed every
+  // expired/deleted-status card regardless of whether the user flagged it —
+  // including moveToExpiredGroup cards (which are expired by definition,
+  // that's why they're being moved) and keepDespiteExpired ("Keep") cards,
+  // neither of which should ever be swept into removal just for having that
+  // status.
   const toRemove = new Set(
     articleCards
-      .filter(c => c.flagged || c.status === 'expired' || c.status === 'deleted')
+      .filter(c => c.flagged)
       .map(c => c.index)
   );
   // Mutually exclusive with toRemove by construction (toggleFlag()/
@@ -1687,14 +1749,20 @@ function removeAndRegenerate() {
 
   const cardEls = findCardElements(doc);
 
-  // Reordering only makes sense when there's exactly one container to
-  // re-append into. If cards have been split across more than one
-  // #custom-offers-list (or there's no recognized container at all),
-  // skip reordering but still remove — checked before removal since a
+  // Reordering applies within whichever container a card already lives in
+  // — it never moves a card between containers by itself (that's what the
+  // Expired-group move button is for, see below). Supported for exactly 1
+  // container (the original case) or exactly 2 (the same active+Expired
+  // convention the Expired-group feature below already assumes) — anything
+  // else, skip reordering but still remove. Checked before removal since a
   // removed card's parentNode goes null and would fail this check after.
+  // parentByCardIndex is captured here too, before any mutation, so the
+  // reorder-append loop below knows which container each surviving card
+  // belongs to without re-querying after cards start moving around.
   const containers = Array.from(doc.querySelectorAll('#custom-offers-list'));
-  const singleContainer = containers.length === 1 ? containers[0] : null;
-  const canReorder = !!singleContainer && cardEls.every(el => el.parentNode === singleContainer);
+  const parentByCardIndex = new Map(cardEls.map((el, i) => [i, el.parentNode]));
+  const canReorder = (containers.length === 1 || containers.length === 2)
+    && cardEls.every(el => containers.includes(el.parentNode));
 
   // The Expired-group feature requires an EXISTING second container to move
   // into (deliberately — no attempt to fabricate a heading/section, since
@@ -1732,23 +1800,51 @@ function removeAndRegenerate() {
   if (canReorder && reordered) {
     // appendChild on an already-attached node moves it — replaying
     // articleCards' current (possibly user-reordered) order here reorders
-    // the container's children to match, skipping removed and moved cards
+    // each container's children to match, skipping removed and moved cards
     // (a card moving to the Expired group has nothing to do with this
     // list's own order, and re-appending it here would fight the
     // appendChild into expiredContainer below over where it ends up).
-    articleCards.forEach(c => {
-      const el = cardEls[c.index];
-      if (el && !toRemove.has(c.index) && !toMoveToExpired.has(c.index)) singleContainer.appendChild(el);
+    // Appending to parentByCardIndex's container — not a single shared one
+    // — is what lets this apply within the active list even when a second,
+    // Expired container also exists: a card only reorders relative to
+    // other cards that already share its own original container, never
+    // hopping into the other one just because it's earlier/later in
+    // articleCards' flat array order.
+    // Slot-based, not append-based: appendChild would hoist every card past
+    // any non-.bu-card content in the container (whitespace, or a malformed
+    // card missing its .bu-card wrapper), stranding that content at the top
+    // as blank space. Instead, mark where each surviving card currently
+    // sits with a placeholder, detach them all, then drop the cards back in
+    // the new order into those same positions — so non-card content keeps
+    // its place and the cards just swap among their own slots.
+    const survivors = articleCards.filter(c => cardEls[c.index] && !toRemove.has(c.index) && !toMoveToExpired.has(c.index));
+    const containersInUse = new Set(survivors.map(c => parentByCardIndex.get(c.index)));
+    containersInUse.forEach(parent => {
+      const inContainer = survivors.filter(c => parentByCardIndex.get(c.index) === parent);
+      const slotEls = inContainer.map(c => cardEls[c.index]).sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
+      const placeholders = slotEls.map(el => {
+        const ph = doc.createComment('');
+        el.parentNode.insertBefore(ph, el);
+        return ph;
+      });
+      slotEls.forEach(el => el.remove());
+      inContainer.forEach((c, k) => placeholders[k].replaceWith(cardEls[c.index]));
     });
   }
 
   // Rewrites each moved card's CTA text and relocates it into the article's
-  // existing Expired section, consolidating it with whatever else is
-  // already there. Order follows articleCards' current array order, same
-  // as the reorder loop above, for a predictable result rather than
-  // whatever order toMoveToExpired's Set happens to iterate in (which is
-  // insertion order here — also articleCards order — but this is more
-  // robust to that changing later).
+  // existing Expired section, landing at the TOP of that section (ahead of
+  // whatever's already there) rather than the end — a freshly-expired card
+  // is the one an editor is most likely to want to glance at next, and the
+  // section otherwise tends to accumulate oldest-first with newer arrivals
+  // buried below a growing pile. `anchor` is captured once, before any
+  // insertion, as the container's original first child (null if the
+  // section was empty) — inserting every moved card via `insertBefore(el,
+  // anchor)` places each new card immediately before that same fixed point,
+  // so cards land in articleCards' order (first moved card ends up
+  // topmost-of-the-new-arrivals, not bottommost) instead of each insertion
+  // displacing the previous one and reversing the order.
+  const anchor = expiredContainer ? expiredContainer.firstChild : null;
   const movedCards = [];
   articleCards.forEach(c => {
     if (!toMoveToExpired.has(c.index)) return;
@@ -1756,7 +1852,7 @@ function removeAndRegenerate() {
     if (!el) return;
     const ctaEl = el.querySelector('.' + PROC_TARGET_CLASS);
     if (ctaEl) ctaEl.textContent = EXPIRED_GROUP_CTA_TEXT;
-    expiredContainer.appendChild(el);
+    expiredContainer.insertBefore(el, anchor);
     movedCards.push(c);
   });
 
@@ -1786,7 +1882,7 @@ function removeAndRegenerate() {
   const parts = [];
   if (removed) parts.push(`removed ${removed} card${removed !== 1 ? 's' : ''}`);
   if (movedCards.length) parts.push(`moved ${movedCards.length} card${movedCards.length !== 1 ? 's' : ''} to Expired group`);
-  if (reordered) parts.push(canReorder ? 'applied new order' : "order unchanged — cards aren't in one recognized container");
+  if (reordered) parts.push(canReorder ? 'applied new order' : "order unchanged — cards aren't split cleanly across 1 or 2 recognized containers");
   // Nothing was removed, moved, or reordered, but articleHTMLModified is
   // what got us past the gate above — say so, rather than showing an empty
   // ". Review HTML below." with no context for why there's new output.
@@ -1802,9 +1898,9 @@ function removeAndRegenerate() {
   articleCards
     .filter(c => toRemove.has(c.index))
     .forEach(c => {
-      const why = c.flagged && (c.status === 'expired' || c.status === 'deleted')
+      const why = (c.status === 'expired' || c.status === 'deleted')
         ? `flagged, ${c.status}`
-        : c.flagged ? 'flagged' : c.status;
+        : 'flagged';
       logDetails.push(`Removed "${c.title}"${c.offerId ? ` (offer ${c.offerId})` : ''} — ${why}`);
     });
   movedCards.forEach(c => {
@@ -1818,7 +1914,7 @@ function removeAndRegenerate() {
         }
       });
     } else {
-      logDetails.push("Order was changed in the tool but NOT applied to the output — cards aren't all inside one recognized #custom-offers-list container");
+      logDetails.push("Order was changed in the tool but NOT applied to the output — cards aren't split cleanly across 1 or 2 recognized #custom-offers-list containers");
     }
   }
   const headTags = Array.from(doc.head.children).map(el => el.tagName.toLowerCase());
@@ -1997,6 +2093,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('flag-all-except-kept-btn').addEventListener('click', flagAllExceptKept);
   document.getElementById('unflag-all-btn').addEventListener('click',   () => setAllFlags(false));
   document.getElementById('move-all-expired-btn').addEventListener('click', moveAllExpiredToGroup);
+  document.getElementById('fix-all-iref-btn').addEventListener('click', fixAllIrefIssues);
   document.getElementById('article-preview-toggle').addEventListener('click', toggleArticlePreview);
   document.getElementById('find-replace-btn').addEventListener('click', previewArticleFindMatches);
   document.getElementById('find-input').addEventListener('keydown', e => {
