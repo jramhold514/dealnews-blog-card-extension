@@ -1972,6 +1972,155 @@ function initDrag() {
   });
 }
 
+/* ─── Daily counter ───
+ * Today's deals written and creator picks made, for one author. Replicates the
+ * queries the DealNews Offer Creator extension's Offer Manager runs for a saved
+ * search filtered on Author / Creator Picks + "Today" — same publish-date field,
+ * same ET day boundary, same default exclusion of automated (bulk) offers — so
+ * the counts here match what those searches show. That extension can't be
+ * observed directly (Chrome doesn't let one extension script another's pages),
+ * so this asks DatoCMS instead. */
+const AUTHOR_MODEL_ID = '2041376';
+const DATO_CDA = 'https://graphql.datocms.com/';
+const COUNT_REFRESH_MS = 5 * 60 * 1000;
+let countAuthorId = '';
+
+// Midnight today in America/New_York, as a UTC ISO string. Probes ET's offset
+// at noon UTC of today's ET date (4h in EDT, 5h in EST) — same technique as the
+// Offer Manager's etDateToUTC(), so DST days line up with its "Today" filter.
+function etMidnightTodayISO() {
+  const etDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const etNoonHour = parseInt(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hour: '2-digit', hour12: false,
+  }).format(new Date(`${etDate}T12:00:00Z`)), 10);
+  return new Date(`${etDate}T${String(12 - etNoonHour).padStart(2, '0')}:00:00Z`).toISOString();
+}
+
+async function fetchDealsTodayCount(authorId, sinceISO) {
+  const p = new URLSearchParams();
+  p.set('filter[type]', 'offer');
+  p.set('page[limit]', '1');
+  p.set('filter[fields][author][eq]', authorId);
+  p.append('filter[fields][curation_level][not_in][]', 'bulk');
+  p.append('filter[fields][curation_level][not_in][]', 'verified_bulk');
+  p.set('filter[fields][_first_published_at][gte]', sinceISO);
+  const res = await fetch(`${DATO}/items?${p}`, { headers: datoHeaders() });
+  if (!res.ok) throw new Error(`DatoCMS ${res.status}`);
+  const json = await res.json();
+  return json.meta?.total_count ?? 0;
+}
+
+// Block-level filtering (a pick authored by X) is only exposed by the GraphQL
+// Content Delivery API, not the CMA's /items filters.
+async function fetchPicksTodayCount(authorId, sinceISO) {
+  const query = `query PicksToday($f: OfferModelFilter) { _allOffersMeta(filter: $f) { count } }`;
+  const f = {
+    curatorsPick: { any: { curatorsPick: { author: { eq: authorId } } } },
+    curationLevel: { notIn: ['bulk', 'verified_bulk'] },
+    _firstPublishedAt: { gte: sinceISO },
+  };
+  const res = await fetch(DATO_CDA, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + getToken(),
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'X-Environment': 'main',
+    },
+    body: JSON.stringify({ query, variables: { f } }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.errors) {
+    throw new Error(json?.errors?.[0]?.message || `DatoCMS ${res.status}`);
+  }
+  return json.data?._allOffersMeta?.count ?? 0;
+}
+
+function setCountStat(key, value, error) {
+  document.getElementById(`count-${key}`).textContent = error ? '!' : value;
+  const stat = document.getElementById(`count-${key}-stat`);
+  stat.classList.toggle('err', !!error);
+  stat.title = error ? `Couldn't load: ${error}` : '';
+}
+
+async function refreshDailyCounts() {
+  const updated = document.getElementById('count-updated');
+  if (!getToken()) { updated.textContent = 'needs API token'; return; }
+  if (!countAuthorId) { updated.textContent = 'choose author ⚙'; return; }
+
+  updated.textContent = 'updating…';
+  const since = etMidnightTodayISO();
+  // Independent requests: one failing (e.g. a token without GraphQL access)
+  // still lets the other count show.
+  const [deals, picks] = await Promise.allSettled([
+    fetchDealsTodayCount(countAuthorId, since),
+    fetchPicksTodayCount(countAuthorId, since),
+  ]);
+  setCountStat('deals', deals.value, deals.status === 'rejected' && deals.reason.message);
+  setCountStat('picks', picks.value, picks.status === 'rejected' && picks.reason.message);
+  updated.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+async function loadCountAuthors() {
+  const select = document.getElementById('count-author');
+  if (!getToken()) {
+    select.innerHTML = '<option value="">Save an API token first</option>';
+    return;
+  }
+  try {
+    const res = await fetch(`${DATO}/items?filter[type]=${AUTHOR_MODEL_ID}&page[limit]=500`, { headers: datoHeaders() });
+    if (!res.ok) throw new Error(`DatoCMS ${res.status}`);
+    const json = await res.json();
+    const authors = (json.data || [])
+      .map(i => ({ id: i.id, name: i.attributes?.real_name || i.attributes?.name || '' }))
+      .filter(a => a.name)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    select.innerHTML = '<option value="">— Choose your name —</option>' +
+      authors.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');
+    select.value = countAuthorId;
+  } catch (e) {
+    select.innerHTML = `<option value="">Couldn't load authors (${esc(e.message)})</option>`;
+  }
+}
+
+function toggleCountSettings() {
+  const el = document.getElementById('count-settings');
+  const opening = el.style.display === 'none';
+  el.style.display = opening ? '' : 'none';
+  if (opening) loadCountAuthors();
+}
+
+function initDailyCounter() {
+  document.getElementById('count-refresh-btn').addEventListener('click', refreshDailyCounts);
+  document.getElementById('count-settings-btn').addEventListener('click', toggleCountSettings);
+  document.getElementById('count-author').addEventListener('change', e => {
+    countAuthorId = e.target.value;
+    chrome.storage.sync.set({ countAuthorId });
+    if (countAuthorId) document.getElementById('count-settings').style.display = 'none';
+    refreshDailyCounts();
+  });
+  // A token saved/changed in the token bar should take effect without a reopen.
+  document.getElementById('token-input').addEventListener('change', refreshDailyCounts);
+  // Catch up immediately when the panel comes back into view, rather than
+  // waiting out the rest of the interval.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshDailyCounts();
+  });
+
+  // initToken() fills the token input from its own async storage read; read the
+  // token here too and fill it ourselves rather than depend on callback order.
+  chrome.storage.sync.get(['countAuthorId', 'datoToken'], r => {
+    const tokenInput = document.getElementById('token-input');
+    if (r.datoToken && !tokenInput.value) tokenInput.value = r.datoToken;
+    countAuthorId = r.countAuthorId || '';
+    if (!countAuthorId && r.datoToken) toggleCountSettings();
+    refreshDailyCounts();
+  });
+  setInterval(() => {
+    if (!document.hidden) refreshDailyCounts();
+  }, COUNT_REFRESH_MS);
+}
+
 /* ─── Utilities ─── */
 function esc(str) {
   if (!str) return '';
@@ -2000,6 +2149,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Token + persisted settings
   initToken();
+  initDailyCounter();
   const selectorInput = document.getElementById('editor-selector');
   chrome.storage.sync.get(['editorSelector'], r => {
     if (r.editorSelector) selectorInput.value = r.editorSelector;

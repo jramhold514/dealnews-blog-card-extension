@@ -29,6 +29,22 @@
     </div>
   </div>
 
+  <!-- Daily counter — today's deals written and creator picks made, see refreshDailyCounts() -->
+  <div class="daily-counter">
+    <div class="daily-counter-row">
+      <span class="daily-counter-label">Today</span>
+      <span class="daily-counter-stat" id="count-deals-stat">Deals <strong id="count-deals">–</strong></span>
+      <span class="daily-counter-stat" id="count-picks-stat">Picks <strong id="count-picks">–</strong></span>
+      <span class="daily-counter-updated" id="count-updated"></span>
+      <button class="daily-counter-btn" id="count-refresh-btn" title="Refresh counts">↻</button>
+      <button class="daily-counter-btn" id="count-settings-btn" title="Choose author">⚙</button>
+    </div>
+    <div class="daily-counter-settings" id="count-settings" style="display:none;">
+      <label for="count-author">Count for</label>
+      <select id="count-author"><option value="">Loading authors…</option></select>
+    </div>
+  </div>
+
   <!-- Tabs -->
   <div class="tabs">
     <button class="tab active" id="tab-configure" data-tab="configure">Configure</button>
