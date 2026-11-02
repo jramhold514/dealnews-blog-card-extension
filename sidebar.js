@@ -24,6 +24,8 @@ const EXPIRED_GROUP_CTA_TEXT = 'Expired Promo';
 /* ─── State ─── */
 let offers = [];
 let cardLayout = 'grid'; // 'grid' | 'vertical' — see setCardLayout()
+let cardStyle  = 'standard'; // 'standard' | 'compact' (experimental) — see generateHTML()
+let showImages = true;       // false drops each card's image column entirely — see generateHTML()
 let articleOriginalHTML  = '';
 let articleCards         = [];
 let articleHTMLModified  = false; // set by edits that don't flag/reorder anything — see removeAndRegenerate()
@@ -437,6 +439,63 @@ function updateCTA(id, value) {
   if (offer) offer.ctaText = value;
 }
 
+// Description editing — the offer's description is trusted HTML from
+// dastNodeToHTML() (see "Offer description formatting" in CLAUDE.md), so it's
+// edited by dropping whole top-level blocks (<p>, <ul>, ...) out of it
+// rather than by free-text editing. The pre-edit HTML is kept on
+// valueStatementOriginal the first time a block is removed so Restore works.
+function descTemplate(offer) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = offer.valueStatement || '';
+  return tpl;
+}
+
+function toggleDescEditor(id) {
+  const offer = offers.find(o => o.id === id);
+  if (!offer) return;
+  offer.editingDesc = !offer.editingDesc;
+  renderOffers();
+}
+
+function removeDescBlock(id, blockIndex) {
+  const offer = offers.find(o => o.id === id);
+  if (!offer) return;
+  const tpl = descTemplate(offer);
+  const el = tpl.content.children[blockIndex];
+  if (!el) return;
+  if (offer.valueStatementOriginal === undefined) offer.valueStatementOriginal = offer.valueStatement || '';
+  el.remove();
+  offer.valueStatement = tpl.innerHTML;
+  renderOffers();
+}
+
+function restoreDescription(id) {
+  const offer = offers.find(o => o.id === id);
+  if (!offer || offer.valueStatementOriginal === undefined) return;
+  offer.valueStatement = offer.valueStatementOriginal;
+  delete offer.valueStatementOriginal;
+  renderOffers();
+}
+
+function descEditorRowHTML(o) {
+  const blocks = Array.from(descTemplate(o).content.children);
+  const rows = blocks.length
+    ? blocks.map((el, k) => {
+        const text = el.textContent.trim().replace(/\s+/g, ' ');
+        const label = text ? (text.length > 160 ? text.slice(0, 160) + '…' : text) : '(empty paragraph)';
+        const tag = el.tagName === 'UL' || el.tagName === 'OL' ? 'List · ' : '';
+        return `<div class="desc-block">
+          <span class="desc-block-text${text ? '' : ' empty'}" title="${esc(text)}">${esc(tag + label)}</span>
+          <button class="danger-text" data-action="remove-desc-block" data-id="${esc(o.id)}" data-block="${k}" title="Remove this part of the description">✕</button>
+        </div>`;
+      }).join('')
+    : '<div class="desc-block"><span class="desc-block-text empty">(no description)</span></div>';
+  const restore = o.valueStatementOriginal !== undefined
+    ? `<button class="small" data-action="restore-desc" data-id="${esc(o.id)}">↺ Restore original</button>`
+    : '';
+  return `<tr class="desc-row"><td colspan="8">${rows}${restore}</td></tr>`;
+}
+
 function moveOffer(id, rawVal) {
   const idx = offers.findIndex(o => o.id === id);
   if (idx === -1) return;
@@ -480,6 +539,26 @@ function setCardLayout(layout) {
     document.getElementById(id).classList.remove('active')
   );
   document.getElementById('layout-' + layout + '-btn').classList.add('active');
+  renderPreview();
+  renderHTMLOut();
+}
+
+// Both toggles only change how generateHTML()/renderPreview() render the
+// existing `offers` — nothing about the offers list itself is touched, so
+// flipping back and forth never loses setup work.
+function setCardStyle(style) {
+  cardStyle = style;
+  ['standard', 'compact'].forEach(k =>
+    document.getElementById('style-' + k + '-btn').classList.toggle('active', k === style)
+  );
+  renderPreview();
+  renderHTMLOut();
+}
+
+function setShowImages(on) {
+  showImages = on;
+  document.getElementById('images-on-btn').classList.toggle('active', on);
+  document.getElementById('images-off-btn').classList.toggle('active', !on);
   renderPreview();
   renderHTMLOut();
 }
@@ -575,8 +654,10 @@ function renderOffers() {
       <td><input class="cta-input" value="${esc(o.ctaText || 'Buy Now')}" data-id="${o.id}" /></td>
       <td><button class="lock-btn ${o.locked ? 'locked' : ''}" data-action="lock" data-id="${o.id}"
             title="${o.locked ? 'Unlock position' : 'Lock position'}">${o.locked ? '🔒' : '🔓'}</button></td>
+      <td><button class="lock-btn ${o.editingDesc || o.valueStatementOriginal !== undefined ? 'locked' : ''}" data-action="edit-desc" data-id="${o.id}"
+            title="Edit description — remove parts of it">✂</button></td>
       <td><button class="danger-text" data-action="remove" data-id="${o.id}">Remove</button></td>
-    </tr>`).join('');
+    </tr>${o.editingDesc ? descEditorRowHTML(o) : ''}`).join('');
   initDrag();
 }
 
@@ -592,18 +673,24 @@ function renderPreview() {
     const imgHtml = o.imageUrl
       ? `<img src="${esc(o.imageUrl)}" alt="${esc(o.title)}">`
       : `<div class="no-img">no image</div>`;
+    const compact = cardStyle === 'compact';
+    const imgCol = showImages ? `<div class="card-img-col"><a href="${esc(url)}" target="_blank">${imgHtml}</a></div>` : '';
+    const headline = compact
+      ? `<h3 class="card-h3 card-h3-compact"><a href="${esc(url)}" target="_blank">${esc(compactHeadlineText(o.title, o.callout))}</a></h3>`
+      : `<h3 class="card-h3"><a href="${esc(url)}" target="_blank">${esc(o.title)}</a></h3>
+          <div class="card-price">${esc(o.callout)}</div>`;
+    const cta = `<div class="card-cta-wrap">
+            <a href="${esc(url)}" target="_blank" class="card-cta">${esc(o.ctaText || 'Buy Now')}</a>
+            <button class="danger-text" data-action="remove" data-id="${o.id}" style="flex-shrink:0;">Remove</button>
+          </div>`;
+    const desc = `<div class="card-desc">${o.valueStatement || ''}</div>`;
     return `<div class="card-wrap">
       <div class="card-id">${o.id}</div>
       <div class="card-preview">
-        <div class="card-img-col"><a href="${esc(url)}" target="_blank">${imgHtml}</a></div>
+        ${imgCol}
         <div class="card-content-col">
-          <h3 class="card-h3"><a href="${esc(url)}" target="_blank">${esc(o.title)}</a></h3>
-          <div class="card-price">${esc(o.callout)}</div>
-          <div class="card-desc">${o.valueStatement || ''}</div>
-          <div class="card-cta-wrap">
-            <a href="${esc(url)}" target="_blank" class="card-cta">${esc(o.ctaText || 'Buy Now')}</a>
-            <button class="danger-text" data-action="remove" data-id="${o.id}" style="flex-shrink:0;">Remove</button>
-          </div>
+          ${headline}
+          ${compact ? cta + desc : desc + cta}
         </div>
       </div>
     </div>`;
@@ -651,16 +738,109 @@ function buildDataIref(blogContentId, legacyId, linkType) {
 // match the link it's actually on (e.g. "-image" sitting on the title link)
 // — a mistake a bare presence check wouldn't catch, most likely from manual
 // editing or a find/replace gone wrong.
+// Finds the three tracked links on an already-parsed card. The image link is
+// NOT simply the card's first <a> — a card generated with images turned off
+// has no image link at all, and its first <a> is the title link (grabbing
+// that as "the image link" would misreport the title's data-iref as a
+// mismatch, and let applyIrefFix() overwrite it with an -image value). So
+// it's the first anchor that isn't in the headline, isn't the CTA, and isn't
+// inside any .bu-content block (description/CTA wrapper — which may hold
+// links of their own); null when the card has none.
+function findCardLinks(cardEl) {
+  const h3 = cardEl.querySelector('h3');
+  const title = h3 ? h3.querySelector('a') : null;
+  const button = cardEl.querySelector('.' + PROC_TARGET_CLASS);
+  const image = Array.from(cardEl.querySelectorAll('a')).find(a =>
+    !(h3 && h3.contains(a)) && a !== button && !a.closest('.bu-content')
+  ) || null;
+  return { image, title, button };
+}
+
+// Headline text without the inline callout — compact-style cards fold the
+// callout into the headline link (see generateHTML()), so the raw h3 text
+// would read "Title for $33" instead of the offer's actual title.
+function cardTitleText(h3) {
+  const clone = h3.cloneNode(true);
+  // Replaced with a space, not removed: promo-style headlines splice the
+  // callout into the middle ("AliExpress<span>…</span>Promo Code"), and
+  // removing it outright would glue the two halves into "AliExpressPromo Code".
+  clone.querySelectorAll('.content-call-out').forEach(n => n.replaceWith(' '));
+  return clone.textContent.replace(/\s+/g, ' ').trim();
+}
+
+// Callout text, minus the "for"/dash connector compact-style cards include
+// inside the callout span.
+function cardCalloutText(priceEl) {
+  if (!priceEl) return '';
+  const text = priceEl.textContent.trim();
+  return priceEl.closest('h3') ? text.replace(/^(for|[–—-])\s+/i, '') : text;
+}
+
 function analyzeIrefTags(imageLinkEl, titleLinkEl, ctaLinkEl) {
   const links = [['image', imageLinkEl], ['title', titleLinkEl], ['button', ctaLinkEl]];
   const missing = [];
   const mismatched = [];
   links.forEach(([type, el]) => {
+    // No image link at all (images turned off) means there's nothing to
+    // track — not a missing tag.
+    if (type === 'image' && !el) return;
     const val = el ? el.getAttribute('data-iref') : null;
     if (!val) { missing.push(type); return; }
     if (!val.endsWith(`-${type}`)) mismatched.push(type);
   });
   return { missing, mismatched };
+}
+
+// "for" only reads right after a plain price ("$33"); anything else — "50%
+// off", "$20 off", "Free", "from $19" — gets a dash instead ("Title for 50%
+// off" would be nonsense). Empty callout adds nothing.
+function compactCalloutConnector(callout) {
+  const c = (callout || '').trim();
+  if (!c) return '';
+  return /^\$/.test(c) && !/%|\boff\b/i.test(c) ? 'for' : '–';
+}
+
+// Promo-code offers ("AliExpress Promo Code" + callout "$5 off $35+") read
+// better with the discount spliced in before the promo phrase — "AliExpress
+// $5 off $35 Promo Code" — than tacked on the end. Only applies to
+// discount-style callouts (a bare price like "$33" before "Promo Code" would
+// read wrong) and only when something precedes the phrase (the brand). A
+// trailing "+" ("$35+") is dropped, since "$35+ Promo Code" reads oddly in a
+// headline. Anything else falls back to the "for"/dash suffix.
+const PROMO_PHRASE_PATTERN = /\b(?:promo|coupon|discount)(?:\s+code)?s?\b/i;
+
+function compactHeadlineParts(title, callout) {
+  const c = (callout || '').trim();
+  if (!c) return { before: title, callout: '', after: '', connector: '' };
+  if (/%|\boff\b/i.test(c)) {
+    const m = PROMO_PHRASE_PATTERN.exec(title);
+    if (m && m.index > 0) {
+      return {
+        before: title.slice(0, m.index).trimEnd(),
+        callout: c.replace(/\s*\+$/, ''),
+        after: title.slice(m.index),
+        connector: '',
+      };
+    }
+  }
+  return { before: title, callout: c, after: '', connector: compactCalloutConnector(c) };
+}
+
+// Inner HTML of the compact headline link. The callout stays in a
+// .content-call-out span either way so the Article tab can find/strip it.
+function compactHeadlineHTML(title, callout) {
+  const p = compactHeadlineParts(title, callout);
+  if (!p.callout) return p.before;
+  const span = txt => `<span class="content-call-out" style="font: inherit; color: inherit;">${txt}</span>`;
+  return p.after
+    ? `${p.before}${span(` ${p.callout} `)}${p.after}`
+    : `${p.before}${span(` ${p.connector} ${p.callout}`)}`;
+}
+
+function compactHeadlineText(title, callout) {
+  const p = compactHeadlineParts(title, callout);
+  if (!p.callout) return p.before;
+  return p.after ? `${p.before} ${p.callout} ${p.after}` : `${p.before} ${p.connector} ${p.callout}`;
 }
 
 function generateHTML() {
@@ -680,25 +860,44 @@ function generateHTML() {
     const irefImage  = buildDataIref(blogContentId, o.legacyId, 'image');
     const irefTitle  = buildDataIref(blogContentId, o.legacyId, 'title');
     const irefButton = buildDataIref(blogContentId, o.legacyId, 'button');
-    return `      <div class="bu-card shadow-depth-0" data-offer-id="${o.id}">
-        <div class="bu-card-content">
-          <div class="bu-columns">
-            <div class="bu-column bu-is-full-tablet bu-is-one-third-desktop bu-is-one-fifth-widescreen bu-is-flex bu-is-justify-content-center" style="height: 200px; width: 200px; margin: auto;">
+    const imageCol = showImages ? `            <div class="bu-column bu-is-full-tablet bu-is-one-third-desktop bu-is-one-fifth-widescreen bu-is-flex bu-is-justify-content-center" style="height: 200px; width: 200px; margin: auto;">
               <a href="${href}" landing_url="${landing}" vendor="${v}" brand="0" category="0" title="${t}"${irefImage}>
                 ${img}
               </a>
             </div>
-            <div class="bu-column bu-is-flex bu-is-flex-direction-column" style="min-width: 150px;">
-              <h3 class="bu-is-4 bu-mb-2">
+` : '';
+    const descBlock = `              <div class="bu-content bu-is-flex-grow-1">${vs}</div>`;
+    const ctaBlock = `              <div class="bu-content bu-ml-0 ${cardStyle === 'compact' ? 'bu-mb-4' : 'bu-mb-0'} bu-is-flex-touch bu-is-justify-content-center">
+                <a class="btn btn-cta bu-m-0" href="${href}" landing_url="${landing}" vendor="${v}" brand="0" category="0" title="${t}"${irefButton}>${o.ctaText || 'Buy Now'}</a>
+              </div>`;
+    // Standard: headline, then callout on its own line, description, button.
+    // Compact (experimental): callout folds into the headline link as one
+    // line ("Title for $33") at a fixed size matching dealnews.com's own deal
+    // card headlines, and the button moves up into the callout's old slot.
+    // The callout span keeps the .content-call-out class so the Article tab
+    // can still find it, but resets font/color — that class (and .price)
+    // carry large, green, condensed-font styling on the live site.
+    const textBlocks = cardStyle === 'compact'
+      ? `              <h3 class="bu-mb-2" style="font-size: 24px; font-weight: 400; line-height: 32px;">
+                <a href="${href}" landing_url="${landing}" vendor="${v}" brand="0" category="0" title="${t}"${irefTitle}>
+                  ${compactHeadlineHTML(o.title, o.callout)}
+                </a>
+              </h3>
+${ctaBlock}
+${descBlock}`
+      : `              <h3 class="bu-is-4 bu-mb-2">
                 <a href="${href}" landing_url="${landing}" vendor="${v}" brand="0" category="0" title="${t}"${irefTitle}>
                   ${o.title}
                 </a>
               </h3>
               <span class="price content-call-out bu-is-5 bu-mb-4">${o.callout}</span>
-              <div class="bu-content bu-is-flex-grow-1">${vs}</div>
-              <div class="bu-content bu-ml-0 bu-mb-0 bu-is-flex-touch bu-is-justify-content-center">
-                <a class="btn btn-cta bu-m-0" href="${href}" landing_url="${landing}" vendor="${v}" brand="0" category="0" title="${t}"${irefButton}>${o.ctaText || 'Buy Now'}</a>
-              </div>
+${descBlock}
+${ctaBlock}`;
+    return `      <div class="bu-card shadow-depth-0" data-offer-id="${o.id}">
+        <div class="bu-card-content">
+          <div class="bu-columns">
+${imageCol}            <div class="bu-column bu-is-flex bu-is-flex-direction-column" style="min-width: 150px;">
+${textBlocks}
             </div>
           </div>
         </div>
@@ -855,6 +1054,7 @@ async function loadFromPage() {
   errEl.style.display = 'none';
   spinnerEl.style.display = 'inline-block';
   document.getElementById('load-page-btn').disabled = true;
+  refreshBlogIdFromActiveTab();
 
   try {
     const response = await sendToContentScript({ type: 'GET_ARTICLE_HTML' });
@@ -940,18 +1140,18 @@ function parseAndDisplayCards(html) {
     // may have it as a <p>; .bu-is-flex-grow-1 distinguishes it from the CTA
     // wrapper div, which also carries the plain .bu-content class.
     const descEl = el.querySelector('.bu-content.bu-is-flex-grow-1') || el.querySelector('.bu-content') || el.querySelector('p');
-    const titleLinkEl = h3 ? h3.querySelector('a') : null;
-    const title = h3 ? h3.textContent.trim() : `Card ${i + 1}`;
+    const links = findCardLinks(el);
+    const title = h3 ? cardTitleText(h3) : `Card ${i + 1}`;
     const landingUrl = firstLink ? (firstLink.getAttribute('landing_url') || firstLink.href || '') : '';
     const offerId = el.getAttribute('data-offer-id') || null;
     const ctaText = ctaEl ? ctaEl.textContent.trim() : '';
     const imageUrl = imgEl ? imgEl.getAttribute('src') : null;
-    const callout = priceEl ? priceEl.textContent.trim() : '';
+    const callout = cardCalloutText(priceEl);
     const valueStatement = descEl ? descEl.textContent.trim() : '';
     // Independent of live DatoCMS status — the card's own CTA text is the
     // source of truth for "an editor already decided this stays."
     const keepDespiteExpired = EXPIRED_CTA_PATTERN.test(ctaText);
-    const { missing: irefMissing, mismatched: irefMismatched } = analyzeIrefTags(firstLink, titleLinkEl, ctaEl);
+    const { missing: irefMissing, mismatched: irefMismatched } = analyzeIrefTags(links.image, links.title, links.button);
     return {
       index: i, title, landingUrl, offerId, ctaText, imageUrl, callout, valueStatement,
       keepDespiteExpired, irefMissing, irefMismatched, status: 'unchecked', flagged: false,
@@ -992,17 +1192,17 @@ function refreshArticleCardFields() {
     // may have it as a <p>; .bu-is-flex-grow-1 distinguishes it from the CTA
     // wrapper div, which also carries the plain .bu-content class.
     const descEl = el.querySelector('.bu-content.bu-is-flex-grow-1') || el.querySelector('.bu-content') || el.querySelector('p');
-    const titleLinkEl = h3 ? h3.querySelector('a') : null;
+    const links = findCardLinks(el);
 
-    card.title = h3 ? h3.textContent.trim() : card.title;
+    card.title = h3 ? cardTitleText(h3) : card.title;
     card.landingUrl = firstLink ? (firstLink.getAttribute('landing_url') || firstLink.href || '') : card.landingUrl;
     card.offerId = el.getAttribute('data-offer-id') || null;
     card.ctaText = ctaEl ? ctaEl.textContent.trim() : card.ctaText;
     card.imageUrl = imgEl ? imgEl.getAttribute('src') : card.imageUrl;
-    card.callout = priceEl ? priceEl.textContent.trim() : card.callout;
+    card.callout = priceEl ? cardCalloutText(priceEl) : card.callout;
     card.valueStatement = descEl ? descEl.textContent.trim() : card.valueStatement;
     card.keepDespiteExpired = EXPIRED_CTA_PATTERN.test(card.ctaText);
-    const { missing, mismatched } = analyzeIrefTags(firstLink, titleLinkEl, ctaEl);
+    const { missing, mismatched } = analyzeIrefTags(links.image, links.title, links.button);
     card.irefMissing = missing;
     card.irefMismatched = mismatched;
   });
@@ -1334,12 +1534,7 @@ async function applyIrefFix(i) {
     }
 
     const { targetEl } = span;
-    const h3 = targetEl.querySelector('h3');
-    const linkEls = {
-      image:  targetEl.querySelector('a'),
-      title:  h3 ? h3.querySelector('a') : null,
-      button: targetEl.querySelector('.' + PROC_TARGET_CLASS),
-    };
+    const linkEls = findCardLinks(targetEl);
 
     const typesToFix = Array.from(new Set([...(card.irefMissing || []), ...(card.irefMismatched || [])]));
     const applied = [];
@@ -2121,6 +2316,145 @@ function initDailyCounter() {
   }, COUNT_REFRESH_MS);
 }
 
+/* ─── Update check ───
+ * Compares the installed version against manifest.json on GitHub's main
+ * branch and shows a banner when main is ahead — this extension is loaded
+ * unpacked, so Chrome never updates it on its own and people otherwise drift
+ * onto old versions. Reads raw.githubusercontent.com directly (it sends
+ * Access-Control-Allow-Origin: *, so no extra host permission is needed).
+ * Cached 6 hours in chrome.storage.local so reopening the panel doesn't
+ * re-fetch every time. A failed fetch (offline, repo made private again)
+ * just means no banner. */
+const UPDATE_MANIFEST_URL = 'https://raw.githubusercontent.com/jramhold514/dealnews-blog-card-extension/main/manifest.json';
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+
+// > 0 when a is newer than b.
+function compareVersions(a, b) {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  }
+  return 0;
+}
+
+async function checkForUpdate() {
+  const installed = chrome.runtime.getManifest().version;
+  const stored = await chrome.storage.local.get(['updateCheck', 'updateDismissed']);
+  let latest = stored.updateCheck?.latest || null;
+
+  const stale = !stored.updateCheck || Date.now() - stored.updateCheck.checkedAt > UPDATE_CHECK_INTERVAL_MS;
+  if (stale) {
+    try {
+      const res = await fetch(UPDATE_MANIFEST_URL, { cache: 'no-store' });
+      if (res.ok) {
+        const version = (await res.json()).version;
+        // The remote file is untrusted data — only accept a plain x.y.z.
+        if (typeof version === 'string' && VERSION_PATTERN.test(version)) latest = version;
+      }
+    } catch { /* offline or unreachable — keep whatever we had */ }
+    // Recorded even on failure so a broken fetch isn't retried on every open.
+    chrome.storage.local.set({ updateCheck: { checkedAt: Date.now(), latest } });
+  }
+
+  const banner = document.getElementById('update-banner');
+  const show = latest && VERSION_PATTERN.test(installed) && compareVersions(latest, installed) > 0
+    && stored.updateDismissed !== latest;
+  if (!show) { banner.style.display = 'none'; return; }
+
+  const text = document.getElementById('update-banner-text');
+  text.textContent = '';
+  text.append(
+    `Update available: ${latest} (you have ${installed}). In the extension folder run `,
+    Object.assign(document.createElement('code'), { textContent: 'git pull' }),
+    ', then reload it at chrome://extensions and reopen this panel.'
+  );
+  banner.dataset.latest = latest;
+  banner.style.display = '';
+}
+
+function initUpdateCheck() {
+  document.getElementById('update-banner-dismiss').addEventListener('click', () => {
+    const banner = document.getElementById('update-banner');
+    chrome.storage.local.set({ updateDismissed: banner.dataset.latest });
+    banner.style.display = 'none';
+  });
+  checkForUpdate();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) checkForUpdate();
+  });
+}
+
+/* ─── Blog Content ID auto-detect ───
+ * The CMS article edit page carries the article's ID in its URL
+ * (secure.dealnews.com/admin/phews/features/article/?article_id=2218015), and
+ * that same ID is what data-iref needs as the Blog Content ID. The sidebar
+ * can read the active tab's URL directly (the "tabs" permission), so no
+ * content-script change is needed. Only the `article_id` param on
+ * secure.dealnews.com is trusted, and only when it's all digits — a wrong
+ * auto-fill would mis-tag every card, which is worse than leaving it blank.
+ *
+ * Switching to a different article always replaces the field (the old value
+ * belonged to the previous article); on the same article a manual edit is
+ * respected and not overwritten. Nothing happens on non-article tabs, so a
+ * value you typed stays put. */
+let lastDetectedBlogId = null;
+let blogIdEditedByUser = false;
+
+function articleIdFromUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname !== 'secure.dealnews.com') return null;
+    const id = u.searchParams.get('article_id');
+    return id && /^\d+$/.test(id) ? id : null;
+  } catch { return null; }
+}
+
+function updateBlogIdSourceLabel() {
+  const label = document.getElementById('blog-id-source');
+  const value = document.getElementById('blog-content-id').value.trim();
+  if (value && value === lastDetectedBlogId) {
+    label.textContent = '✓ from page URL';
+    label.className = 'blog-id-source ok';
+  } else {
+    label.textContent = value ? 'entered manually' : '';
+    label.className = 'blog-id-source';
+  }
+}
+
+function applyDetectedBlogId(url) {
+  const id = articleIdFromUrl(url);
+  if (!id) return;
+  if (id === lastDetectedBlogId && blogIdEditedByUser) return;
+  lastDetectedBlogId = id;
+  blogIdEditedByUser = false;
+  const input = document.getElementById('blog-content-id');
+  if (input.value.trim() !== id) {
+    input.value = id;
+    renderHTMLOut(); // refreshes the "missing Blog Content ID" warning if that view is showing
+  }
+  updateBlogIdSourceLabel();
+}
+
+function refreshBlogIdFromActiveTab() {
+  chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+    if (tabs && tabs[0] && tabs[0].url) applyDetectedBlogId(tabs[0].url);
+  });
+}
+
+function initBlogIdDetection() {
+  document.getElementById('blog-content-id').addEventListener('input', () => {
+    blogIdEditedByUser = true;
+    updateBlogIdSourceLabel();
+  });
+  refreshBlogIdFromActiveTab();
+  chrome.tabs.onActivated.addListener(refreshBlogIdFromActiveTab);
+  chrome.tabs.onUpdated.addListener((_id, changeInfo, tab) => {
+    if (tab.active && (changeInfo.url || changeInfo.status === 'complete')) refreshBlogIdFromActiveTab();
+  });
+}
+
 /* ─── Utilities ─── */
 function esc(str) {
   if (!str) return '';
@@ -2149,6 +2483,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Token + persisted settings
   initToken();
+  initUpdateCheck();
+  initBlogIdDetection();
   initDailyCounter();
   const selectorInput = document.getElementById('editor-selector');
   chrome.storage.sync.get(['editorSelector'], r => {
@@ -2177,6 +2513,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('remove-all-btn').addEventListener('click', removeAllOffers);
   document.getElementById('layout-grid-btn').addEventListener('click', () => setCardLayout('grid'));
   document.getElementById('layout-vertical-btn').addEventListener('click', () => setCardLayout('vertical'));
+  document.getElementById('style-standard-btn').addEventListener('click', () => setCardStyle('standard'));
+  document.getElementById('style-compact-btn').addEventListener('click', () => setCardStyle('compact'));
+  document.getElementById('images-on-btn').addEventListener('click', () => setShowImages(true));
+  document.getElementById('images-off-btn').addEventListener('click', () => setShowImages(false));
 
   // Offers table — event delegation
   const tbody = document.getElementById('offers-tbody');
@@ -2185,6 +2525,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!btn) return;
     if (btn.dataset.action === 'remove') removeOffer(btn.dataset.id);
     if (btn.dataset.action === 'lock')   toggleLock(btn.dataset.id);
+    if (btn.dataset.action === 'edit-desc') toggleDescEditor(btn.dataset.id);
+    if (btn.dataset.action === 'remove-desc-block') removeDescBlock(btn.dataset.id, parseInt(btn.dataset.block, 10));
+    if (btn.dataset.action === 'restore-desc') restoreDescription(btn.dataset.id);
   });
   tbody.addEventListener('input', e => {
     if (e.target.matches('.cta-input')) updateCTA(e.target.dataset.id, e.target.value);

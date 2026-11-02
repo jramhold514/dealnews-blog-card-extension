@@ -20,6 +20,12 @@
     </button>
   </div>
 
+  <!-- Update banner — shown only when a newer version is on GitHub, see checkForUpdate() -->
+  <div class="update-banner" id="update-banner" style="display:none;">
+    <span class="update-banner-text" id="update-banner-text"></span>
+    <button class="daily-counter-btn" id="update-banner-dismiss" title="Dismiss until the next version">✕</button>
+  </div>
+
   <!-- Token bar -->
   <div class="token-bar">
     <div class="token-bar-row">
@@ -81,7 +87,8 @@
       <div class="settings-card">
         <div class="settings-row">
           <label for="blog-content-id">Blog Content ID</label>
-          <input type="text" id="blog-content-id" placeholder="article ID this card is going on" />
+          <input type="text" id="blog-content-id" placeholder="auto-filled from the CMS page, or enter it" />
+          <span class="blog-id-source" id="blog-id-source"></span>
         </div>
         <p style="font-size:10px;color:var(--text-faint);margin-top:6px;">
           Required for data-iref click-tracking attributes on generated cards' links (format: <code>site-widget-card-blog-{this ID}-{offer's legacy ID}-{image|title|button}</code>). Leave blank and no data-iref attributes are added.
@@ -115,6 +122,16 @@
           <button class="sort-btn active" id="layout-grid-btn" title="Multi-column grid (default)">Grid</button>
           <button class="sort-btn" id="layout-vertical-btn" title="Single-column vertical stack">Vertical</button>
         </div>
+        <div class="sort-bar">
+          <span class="sort-bar-label">Style</span>
+          <button class="sort-btn active" id="style-standard-btn" title="Headline, callout on its own line, description, button">Standard</button>
+          <button class="sort-btn" id="style-compact-btn" title="Experimental: callout folded into the headline as one line, button moved up under it">Compact (experimental)</button>
+        </div>
+        <div class="sort-bar">
+          <span class="sort-bar-label">Images</span>
+          <button class="sort-btn active" id="images-on-btn" title="Include each offer's image">On</button>
+          <button class="sort-btn" id="images-off-btn" title="Leave images out of the generated cards (faster loading)">Off</button>
+        </div>
       </div>
 
       <div class="tbl-wrap" id="offers-tbl-wrap" style="display:none;">
@@ -126,6 +143,7 @@
               <th>Title</th>
               <th style="width:58px;">Callout</th>
               <th style="width:80px;">CTA text</th>
+              <th style="width:24px;"></th>
               <th style="width:24px;"></th>
               <th style="width:62px;"></th>
             </tr>
