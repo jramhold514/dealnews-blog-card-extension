@@ -1165,6 +1165,7 @@ function parseAndDisplayCards(html) {
   document.getElementById('regen-section').style.display = 'block';
   document.getElementById('regen-out-block').style.display = 'none';
   regenHTML = '';
+  updateJsonLdButton();
 }
 
 // Re-derives each articleCards entry's *display* fields (title, callout, CTA
@@ -2120,6 +2121,55 @@ function removeAndRegenerate() {
   logChange('Article', `Regenerated HTML — ${parts.join(', ') || 'no changes'}`, logDetails);
 }
 
+// Matches a whole <script type="application/ld+json">…</script> block (any
+// attribute order, either quote style) plus the whitespace after it so
+// removing it doesn't leave a blank gap at the top of the article.
+const JSON_LD_PATTERN = /<script\b[^>]*\btype\s*=\s*(["']?)application\/ld\+json\1[^>]*>[\s\S]*?<\/script\s*>\s*/gi;
+
+function countJsonLdBlocks(html) {
+  return (html.match(JSON_LD_PATTERN) || []).length;
+}
+
+// Shows the "Remove JSON-LD Script" button only while the loaded HTML
+// actually contains one, with a count so it's clear what it will remove.
+function updateJsonLdButton() {
+  const btn  = document.getElementById('strip-jsonld-btn');
+  const note = document.getElementById('strip-jsonld-note');
+  const n = countJsonLdBlocks(articleOriginalHTML || '');
+  btn.style.display = n ? '' : 'none';
+  note.style.display = n ? '' : 'none';
+  if (n) {
+    btn.textContent = `🧹 Remove JSON-LD Script${n > 1 ? `s (${n})` : ''}`;
+    note.textContent = `${n} JSON-LD structured-data block${n !== 1 ? 's' : ''} found in the loaded HTML.`;
+  }
+}
+
+// A targeted string removal on articleOriginalHTML (not a DOM reserialize),
+// same approach as Find & Replace / the iref fix, so nothing else in the
+// article gets reformatted. Flags the HTML as modified so Regenerate
+// produces output even if no card was flagged or moved.
+function stripJsonLd() {
+  const n = countJsonLdBlocks(articleOriginalHTML || '');
+  if (!n) { showToast('No JSON-LD script found.', true); return; }
+
+  const removed = (articleOriginalHTML.match(JSON_LD_PATTERN) || []);
+  articleOriginalHTML = articleOriginalHTML.replace(JSON_LD_PATTERN, '');
+  articleHTMLModified = true;
+
+  // A prior regenerate's output still contains the script — hide it rather
+  // than leave a stale "final" HTML visible.
+  document.getElementById('regen-out-block').style.display = 'none';
+  regenHTML = '';
+
+  updateJsonLdButton();
+  logChange(
+    'Article',
+    `Removed ${n} JSON-LD script block${n !== 1 ? 's' : ''} from loaded HTML`,
+    removed.map(s => `${s.trim().length} characters, starts: ${s.trim().slice(0, 80)}…`)
+  );
+  showToast(`Removed ${n} JSON-LD script block${n !== 1 ? 's' : ''}. Click Regenerate for the cleaned HTML.`);
+}
+
 function copyRegenHTML() {
   if (!regenHTML) return;
   navigator.clipboard.writeText(regenHTML).then(() => {
@@ -2617,6 +2667,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateFindMatchesCounter();
   });
   document.getElementById('regen-btn').addEventListener('click',        removeAndRegenerate);
+  document.getElementById('strip-jsonld-btn').addEventListener('click', stripJsonLd);
   document.getElementById('regen-copy-btn').addEventListener('click',   copyRegenHTML);
 
   // Article card list — event delegation for flag buttons and reorder input

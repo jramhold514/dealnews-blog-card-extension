@@ -340,9 +340,11 @@
     <!-- Regenerate -->
     <div class="article-section" id="regen-section" style="display:none;">
       <div class="section-label">Apply Changes &amp; Regenerate</div>
-      <div class="article-actions">
+      <div class="article-actions" style="flex-wrap:wrap;">
         <button class="primary" id="regen-btn">Remove Flagged / Reorder &amp; Regenerate</button>
+        <button id="strip-jsonld-btn" class="small" style="display:none;" title="Deletes the JSON-LD structured-data &lt;script&gt; block(s) from the loaded article HTML. Click Regenerate afterward to get the cleaned HTML.">🧹 Remove JSON-LD Script</button>
       </div>
+      <p id="strip-jsonld-note" style="font-size:10px;color:var(--text-faint);margin:6px 0 0;display:none;"></p>
       <div class="tracking-banner" id="regen-tracking-banner" style="display:none;margin-top:10px;"></div>
       <div id="regen-out-block" style="display:none;margin-top:10px;">
         <div class="html-out-wrap">
