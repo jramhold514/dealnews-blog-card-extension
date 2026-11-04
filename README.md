@@ -29,6 +29,8 @@ git pull
 
 Then go back to `chrome://extensions` and click the reload icon (↻) on "DealNews Blog Card Editor." Close and reopen the sidebar afterward.
 
+The sidebar checks this repo's `main` branch for a newer version and shows a yellow banner at the top when one is available — that's your cue to run the steps above.
+
 ## For contributors
 
 See [CLAUDE.md](CLAUDE.md) for a detailed architecture reference, function-level rationale, and full version history — it's written for AI-assisted development but is equally useful as human documentation of *why* things work the way they do.

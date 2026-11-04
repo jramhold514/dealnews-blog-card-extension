@@ -20,12 +20,34 @@
     </button>
   </div>
 
+  <!-- Update banner — shown only when a newer version is on GitHub, see checkForUpdate() -->
+  <div class="update-banner" id="update-banner" style="display:none;">
+    <span class="update-banner-text" id="update-banner-text"></span>
+    <button class="daily-counter-btn" id="update-banner-dismiss" title="Dismiss until the next version">✕</button>
+  </div>
+
   <!-- Token bar -->
   <div class="token-bar">
     <div class="token-bar-row">
       <label for="token-input">API Token</label>
       <input type="password" id="token-input" placeholder="DatoCMS read-only token…" autocomplete="off" />
       <span class="token-status" id="token-status">—</span>
+    </div>
+  </div>
+
+  <!-- Daily counter — today's deals written and creator picks made, see refreshDailyCounts() -->
+  <div class="daily-counter">
+    <div class="daily-counter-row">
+      <span class="daily-counter-label">Today</span>
+      <span class="daily-counter-stat" id="count-deals-stat">Deals <strong id="count-deals">–</strong></span>
+      <span class="daily-counter-stat" id="count-picks-stat">Picks <strong id="count-picks">–</strong></span>
+      <span class="daily-counter-updated" id="count-updated"></span>
+      <button class="daily-counter-btn" id="count-refresh-btn" title="Refresh counts">↻</button>
+      <button class="daily-counter-btn" id="count-settings-btn" title="Choose author">⚙</button>
+    </div>
+    <div class="daily-counter-settings" id="count-settings" style="display:none;">
+      <label for="count-author">Count for</label>
+      <select id="count-author"><option value="">Loading authors…</option></select>
     </div>
   </div>
 
@@ -65,7 +87,8 @@
       <div class="settings-card">
         <div class="settings-row">
           <label for="blog-content-id">Blog Content ID</label>
-          <input type="text" id="blog-content-id" placeholder="article ID this card is going on" />
+          <input type="text" id="blog-content-id" placeholder="auto-filled from the CMS page, or enter it" />
+          <span class="blog-id-source" id="blog-id-source"></span>
         </div>
         <p style="font-size:10px;color:var(--text-faint);margin-top:6px;">
           Required for data-iref click-tracking attributes on generated cards' links (format: <code>site-widget-card-blog-{this ID}-{offer's legacy ID}-{image|title|button}</code>). Leave blank and no data-iref attributes are added.
@@ -99,6 +122,16 @@
           <button class="sort-btn active" id="layout-grid-btn" title="Multi-column grid (default)">Grid</button>
           <button class="sort-btn" id="layout-vertical-btn" title="Single-column vertical stack">Vertical</button>
         </div>
+        <div class="sort-bar">
+          <span class="sort-bar-label">Style</span>
+          <button class="sort-btn active" id="style-standard-btn" title="Headline, callout on its own line, description, button">Standard</button>
+          <button class="sort-btn" id="style-compact-btn" title="Experimental: callout folded into the headline as one line, button moved up under it">Compact (experimental)</button>
+        </div>
+        <div class="sort-bar">
+          <span class="sort-bar-label">Images</span>
+          <button class="sort-btn active" id="images-on-btn" title="Include each offer's image">On</button>
+          <button class="sort-btn" id="images-off-btn" title="Leave images out of the generated cards (faster loading)">Off</button>
+        </div>
       </div>
 
       <div class="tbl-wrap" id="offers-tbl-wrap" style="display:none;">
@@ -110,6 +143,7 @@
               <th>Title</th>
               <th style="width:58px;">Callout</th>
               <th style="width:80px;">CTA text</th>
+              <th style="width:24px;"></th>
               <th style="width:24px;"></th>
               <th style="width:62px;"></th>
             </tr>
@@ -162,7 +196,7 @@
     <div class="proc-row">
       <div class="proc-card">
         <label class="proc-label">New Button Text</label>
-        <input type="text" id="proc-btnText" placeholder='e.g. "Get Deal"' value="Get Deal" />
+        <input type="text" id="proc-btnText" placeholder='e.g. "Use Promo"' value="Use Promo" />
       </div>
       <div class="proc-tally">
         <div class="proc-tally-num" id="proc-tallyNum">—</div>
@@ -253,6 +287,8 @@
         <button id="flag-all-btn" class="small">Flag All for Removal</button>
         <button id="flag-all-except-kept-btn" class="small">Flag All Except Kept</button>
         <button id="unflag-all-btn" class="small">Unflag All</button>
+        <button id="move-all-expired-btn" class="small" title="Marks every expired card (by status check or CTA text) to move into the article's existing Expired group on regenerate, instead of being removed.">🗄️ Move All Expired</button>
+        <button id="fix-all-iref-btn" class="small" title="Resolves each flagged card's legacy ID from DatoCMS and writes its missing/incorrect data-iref attribute(s), one card at a time.">🔗 Fix All Iref</button>
         <button id="article-preview-toggle" class="small">🖼 Show Visual Preview</button>
         <p class="msg err" id="check-err" style="display:none;width:100%;"></p>
       </div>
