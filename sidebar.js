@@ -1117,10 +1117,19 @@ function parseAndDisplayCards(html) {
   const cardEls = findCardElements(doc);
 
   if (!cardEls.length) {
-    errEl.textContent = 'No deal cards (.bu-card) found in the loaded HTML.';
+    // Clear any cards left over from a previous article — otherwise
+    // removeAndRegenerate() would act on stale card state against this HTML.
+    articleCards = [];
+    errEl.textContent = 'No deal cards (.bu-card) found in the loaded HTML. Find & Replace and Remove JSON-LD still work — use Regenerate below to get the edited HTML.';
     errEl.style.display = 'block';
     document.getElementById('cards-found-section').style.display = 'none';
-    document.getElementById('regen-section').style.display = 'none';
+    // Kept visible (it used to be hidden here) so edits made via Find &
+    // Replace / Remove JSON-LD on card-less HTML can still be regenerated
+    // into the copyable output block.
+    document.getElementById('regen-section').style.display = 'block';
+    document.getElementById('regen-out-block').style.display = 'none';
+    regenHTML = '';
+    updateJsonLdButton();
     return;
   }
 
@@ -1900,7 +1909,35 @@ function updateCardBadge(index) {
 }
 
 function removeAndRegenerate() {
-  if (!articleCards.length || !articleOriginalHTML) return;
+  if (!articleOriginalHTML) return;
+
+  // No deal cards in the loaded HTML — nothing to remove, move, or reorder,
+  // so the only thing to output is the text edits (Find & Replace / Remove
+  // JSON-LD). Emits articleOriginalHTML as-is rather than round-tripping it
+  // through DOMParser, so the rest of the article isn't reformatted.
+  if (!articleCards.length) {
+    if (!articleHTMLModified) {
+      showToast('No deal cards in this HTML and no edits made yet — nothing to do.', true);
+      logChange('Article', 'Regenerate clicked — nothing to do (no deal cards, no edits).');
+      return;
+    }
+    regenHTML = articleOriginalHTML;
+    document.getElementById('regen-out-pre').textContent = regenHTML;
+    document.getElementById('regen-out-block').style.display = 'block';
+
+    const noCardTrackingMatches = findTrackingLinkMatches(regenHTML);
+    renderTrackingLinkBanner('regen', noCardTrackingMatches);
+    if (noCardTrackingMatches.length) {
+      logChange(
+        'Article',
+        `Regenerated HTML still contains ${noCardTrackingMatches.length} tracking URL${noCardTrackingMatches.length !== 1 ? 's' : ''}`,
+        noCardTrackingMatches
+      );
+    }
+    showToast('Applied edits (no deal cards in this HTML). Review HTML below.');
+    logChange('Article', 'Regenerated HTML — applied edits (Find & Replace / JSON-LD removal), no deal cards present');
+    return;
+  }
 
   // Flagged is the single source of truth for removal — flagExpired() /
   // flagAllExceptKept() / the bulk buttons / per-card 🚩 are all just ways to
