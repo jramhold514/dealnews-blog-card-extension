@@ -1390,8 +1390,9 @@ function findCardLinks(cardEl) {
   const image = Array.from(cardEl.querySelectorAll('a')).find(a =>
     !(h3 && h3.contains(a)) && a !== button && !a.closest('.bu-content, .cp-quote')
   ) || null;
-  // Creator Pick cards: one link per creator (none on other card styles).
-  const creators = Array.from(cardEl.querySelectorAll('a.cp-pill'));
+  // Creator Pick cards: one link per creator (none on other card styles). The link
+  // is inside the .cp-pill span; cards pasted before 2.39.2 have the pill as the link.
+  const creators = Array.from(cardEl.querySelectorAll('a.cp-pill, .cp-pill a'));
   return { image, title, button, creators };
 }
 
@@ -1602,9 +1603,14 @@ function cpPillHTML(pick, tracking) {
     : '';
   const style = `display: inline-flex; align-items: center; gap: 8px; background: ${CARD.pillBg}; color: ${CARD.pillInk}; border-radius: 24px; padding: 3px 14px 3px ${face ? '3px' : '14px'}; font: 500 14px/18px Roboto, sans-serif; margin-bottom: 6px;`;
   const url = cpCreatorUrl(pick.authorName, pick.authorLegacyId);
-  return url
-    ? `<a class="cp-pill" href="${esc(url)}" title="${nameAttr}"${tracking} style="${style}">${face}${nameText}</a>`
-    : `<span class="cp-pill" style="${style}">${face}${nameText}</span>`;
+  // The pill's look lives on a span, and only the name is the link. The CMS link
+  // plugin rewrites a link and drops its title, data-iref and style; when the pill
+  // WAS the link, that took the whole pill look with it. The face stays outside
+  // the link so the layout holds even if the link loses its style.
+  const name = url
+    ? `<a href="${esc(url)}" title="${nameAttr}"${tracking} style="color: inherit; text-decoration: none;">${nameText}</a>`
+    : nameText;
+  return `<span class="cp-pill" style="${style}">${face}${name}</span>`;
 }
 
 // One block per creator, each creator's pill directly above their own quote, so

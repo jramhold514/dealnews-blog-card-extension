@@ -24,7 +24,7 @@ Bump `"version"` in `manifest.json` (semver) whenever a change lands that alters
 - Minor (`x.MINOR.x`) — new functionality, non-breaking additions
 - Major (`MAJOR.x.x`) — significant overhauls or breaking changes to how a tab/flow works
 
-Currently at `2.39.1`. Each bump gets a short entry at the top of CHANGELOG.md (what changed and why, function names). Don't put version history in this file.
+Currently at `2.39.2`. Each bump gets a short entry at the top of CHANGELOG.md (what changed and why, function names). Don't put version history in this file.
 
 ## Architecture
 
